@@ -3,7 +3,6 @@ name: Build iOS IPA
 on:
   push:
     branches: [ main ]
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -24,26 +23,30 @@ jobs:
 
       - name: Build unsigned device app
         run: |
-          xcodebuild             -project ZombiesIOS.xcodeproj             -scheme ZombiesIOS             -configuration Release             -sdk iphoneos             -destination 'generic/platform=iOS'             -derivedDataPath build/DerivedData             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             CODE_SIGN_IDENTITY=""             build
+          xcodebuild \
+            -project ZombiesIOS.xcodeproj \
+            -scheme ZombiesIOS \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
 
       - name: Package IPA
         run: |
           APP_PATH="$(find build/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -print -quit)"
-          if [ -z "$APP_PATH" ]; then
-            echo "No .app bundle found"
-            exit 1
-          fi
-
+          test -n "$APP_PATH"
           rm -rf Payload
-          mkdir -p Payload
+          mkdir Payload
           cp -R "$APP_PATH" Payload/
           /usr/bin/zip -qry ZombiesIOS-unsigned.ipa Payload
           rm -rf Payload
-
-          echo "Created:"
           ls -lh ZombiesIOS-unsigned.ipa
 
-      - name: Upload unsigned IPA artifact
+      - name: Upload Actions artifact
         uses: actions/upload-artifact@v4
         with:
           name: ZombiesIOS-unsigned-IPA
@@ -51,10 +54,15 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish rolling GitHub Release
-        if: github.event_name != 'pull_request'
+      - name: Create or update latest-build release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete latest-build --cleanup-tag --yes || true
-          gh release create latest-build ZombiesIOS-unsigned.ipa             --title "Latest ZombiesIOS IPA"             --notes "Automated unsigned iOS build from commit ${GITHUB_SHA}. Sign with SideStore/AltStore or your preferred signing method."             --latest
+          if gh release view latest-build >/dev/null 2>&1; then
+            gh release upload latest-build ZombiesIOS-unsigned.ipa --clobber
+          else
+            gh release create latest-build ZombiesIOS-unsigned.ipa \
+              --target "$GITHUB_SHA" \
+              --title "Latest ZombiesIOS IPA" \
+              --notes "Automated unsigned iOS build. Sign before installing on iPhone."
+          fi
