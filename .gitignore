@@ -1,0 +1,24 @@
+# Xcode / Swift
+DerivedData/
+build/
+*.xcarchive
+*.ipa
+.swiftpm/
+.build/
+
+# macOS
+.DS_Store
+
+# PS3 dumps and proprietary binaries
+*.iso
+*.xiso
+*.pkg
+EBOOT.BIN
+*.self
+*.sprx
+*.psarc
+raw_dump/
+PS3_GAME/
+
+# Scanner output that may contain local paths
+scan-output/
