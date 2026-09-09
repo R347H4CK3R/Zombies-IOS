@@ -2,7 +2,13 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct ContentView: View {
-    @State private var showingImporter = false
+    private enum PickerMode {
+        case folder
+        case file
+    }
+
+    @State private var showingFolderImporter = false
+    @State private var showingFileImporter = false
     @State private var scanning = false
     @State private var report: ScanReport?
     @State private var exportedReportURL: URL?
@@ -13,16 +19,25 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section {
+                Section("Choose BO2 Data") {
                     Button("Select PS3_GAME or USRDIR Folder") {
-                        showingImporter = true
+                        showingFolderImporter = true
                     }
                     .disabled(scanning)
+
+                    Button("Select Any File Inside USRDIR") {
+                        showingFileImporter = true
+                    }
+                    .disabled(scanning)
+
+                    Text("If iOS only lets you open the folder instead of selecting it, use the second button and choose any file inside USRDIR. The scanner will scan that file's parent folder.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 if scanning {
                     Section {
-                        ProgressView("Scanning USB / Files folder…")
+                        ProgressView("Scanning On My iPhone / Files folder…")
                     }
                 }
 
@@ -62,35 +77,59 @@ struct ContentView: View {
             }
             .navigationTitle("Zombies Importer")
             .fileImporter(
-                isPresented: $showingImporter,
+                isPresented: $showingFolderImporter,
                 allowedContentTypes: [.folder],
                 allowsMultipleSelection: false
             ) { result in
-                switch result {
-                case .success(let urls):
-                    guard let folder = urls.first else { return }
-                    scanning = true
-                    errorMessage = nil
-                    exportedReportURL = nil
+                handleSelection(result, mode: .folder)
+            }
+            .fileImporter(
+                isPresented: $showingFileImporter,
+                allowedContentTypes: [.data, .item],
+                allowsMultipleSelection: false
+            ) { result in
+                handleSelection(result, mode: .file)
+            }
+        }
+    }
 
-                    Task {
-                        do {
-                            let newReport = try await scanner.scan(folderURL: folder)
-                            let reportURL = try ReportExporter.makeJSONFile(from: newReport)
-                            await MainActor.run {
-                                report = newReport
-                                exportedReportURL = reportURL
-                                scanning = false
-                            }
-                        } catch {
-                            await MainActor.run {
-                                errorMessage = String(describing: error)
-                                scanning = false
-                            }
-                        }
-                    }
-                case .failure(let error):
-                    errorMessage = error.localizedDescription
+    private func handleSelection(_ result: Result<[URL], Error>, mode: PickerMode) {
+        switch result {
+        case .success(let urls):
+            guard let selectedURL = urls.first else { return }
+
+            let folderURL: URL
+            switch mode {
+            case .folder:
+                folderURL = selectedURL
+            case .file:
+                folderURL = selectedURL.deletingLastPathComponent()
+            }
+
+            beginScan(folderURL)
+        case .failure(let error):
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func beginScan(_ folder: URL) {
+        scanning = true
+        errorMessage = nil
+        exportedReportURL = nil
+
+        Task {
+            do {
+                let newReport = try await scanner.scan(folderURL: folder)
+                let reportURL = try ReportExporter.makeJSONFile(from: newReport)
+                await MainActor.run {
+                    report = newReport
+                    exportedReportURL = reportURL
+                    scanning = false
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = String(describing: error)
+                    scanning = false
                 }
             }
         }
