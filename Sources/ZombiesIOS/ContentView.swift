@@ -5,6 +5,7 @@ struct ContentView: View {
     @State private var showingImporter = false
     @State private var scanning = false
     @State private var report: ScanReport?
+    @State private var exportedReportURL: URL?
     @State private var errorMessage: String?
 
     private let scanner = PS3DumpScanner()
@@ -30,6 +31,12 @@ struct ContentView: View {
                         LabeledContent("Files", value: report.totalFiles.formatted())
                         LabeledContent("Zombies candidates", value: report.zombiesCandidates.count.formatted())
                         LabeledContent("Size", value: ByteCountFormatter.string(fromByteCount: report.totalBytes, countStyle: .file))
+
+                        if let exportedReportURL {
+                            ShareLink(item: exportedReportURL) {
+                                Label("Export JSON Report", systemImage: "square.and.arrow.up")
+                            }
+                        }
                     }
 
                     Section("Likely Zombies Content") {
@@ -64,11 +71,15 @@ struct ContentView: View {
                     guard let folder = urls.first else { return }
                     scanning = true
                     errorMessage = nil
+                    exportedReportURL = nil
+
                     Task {
                         do {
                             let newReport = try await scanner.scan(folderURL: folder)
+                            let reportURL = try ReportExporter.makeJSONFile(from: newReport)
                             await MainActor.run {
                                 report = newReport
+                                exportedReportURL = reportURL
                                 scanning = false
                             }
                         } catch {
