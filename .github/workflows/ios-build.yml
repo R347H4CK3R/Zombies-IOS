@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-latest
@@ -31,6 +34,7 @@ jobs:
             exit 1
           fi
 
+          rm -rf Payload
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
           /usr/bin/zip -qry ZombiesIOS-unsigned.ipa Payload
@@ -39,10 +43,18 @@ jobs:
           echo "Created:"
           ls -lh ZombiesIOS-unsigned.ipa
 
-      - name: Upload unsigned IPA
+      - name: Upload unsigned IPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: ZombiesIOS-unsigned-IPA
           path: ZombiesIOS-unsigned.ipa
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish rolling GitHub Release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest-build --cleanup-tag --yes || true
+          gh release create latest-build ZombiesIOS-unsigned.ipa             --title "Latest ZombiesIOS IPA"             --notes "Automated unsigned iOS build from commit ${GITHUB_SHA}. Sign with SideStore/AltStore or your preferred signing method."             --latest
