@@ -2,12 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct ContentView: View {
-    private enum PickerMode {
-        case folder
-        case file
-    }
-
-    @State private var showingFolderImporter = false
+    @State private var showingFolderPicker = false
     @State private var showingFileImporter = false
     @State private var scanning = false
     @State private var report: ScanReport?
@@ -20,24 +15,24 @@ struct ContentView: View {
         NavigationStack {
             List {
                 Section("Choose BO2 Data") {
-                    Button("Select PS3_GAME or USRDIR Folder") {
-                        showingFolderImporter = true
+                    Button("Select PS3_GAME / USRDIR Folder") {
+                        showingFolderPicker = true
                     }
                     .disabled(scanning)
 
-                    Button("Select Any File Inside USRDIR") {
+                    Button("Select a File (diagnostic fallback)") {
                         showingFileImporter = true
                     }
                     .disabled(scanning)
 
-                    Text("If iOS only lets you open the folder instead of selecting it, use the second button and choose any file inside USRDIR. The scanner will scan that file's parent folder.")
+                    Text("The folder button now uses Apple's native UIDocumentPicker directly instead of SwiftUI's folder importer.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
                 if scanning {
                     Section {
-                        ProgressView("Scanning On My iPhone / Files folder…")
+                        ProgressView("Scanning selected folder…")
                     }
                 }
 
@@ -76,39 +71,30 @@ struct ContentView: View {
                 }
             }
             .navigationTitle("Zombies Importer")
-            .fileImporter(
-                isPresented: $showingFolderImporter,
-                allowedContentTypes: [.folder],
-                allowsMultipleSelection: false
-            ) { result in
-                handleSelection(result, mode: .folder)
+            .sheet(isPresented: $showingFolderPicker) {
+                FolderPicker(
+                    onPick: { url in
+                        showingFolderPicker = false
+                        beginScan(url)
+                    },
+                    onCancel: {
+                        showingFolderPicker = false
+                    }
+                )
             }
             .fileImporter(
                 isPresented: $showingFileImporter,
                 allowedContentTypes: [.data, .item],
                 allowsMultipleSelection: false
             ) { result in
-                handleSelection(result, mode: .file)
+                switch result {
+                case .success(let urls):
+                    guard let url = urls.first else { return }
+                    errorMessage = "Selected file: \(url.lastPathComponent). Folder access is required for a full recursive scan."
+                case .failure(let error):
+                    errorMessage = error.localizedDescription
+                }
             }
-        }
-    }
-
-    private func handleSelection(_ result: Result<[URL], Error>, mode: PickerMode) {
-        switch result {
-        case .success(let urls):
-            guard let selectedURL = urls.first else { return }
-
-            let folderURL: URL
-            switch mode {
-            case .folder:
-                folderURL = selectedURL
-            case .file:
-                folderURL = selectedURL.deletingLastPathComponent()
-            }
-
-            beginScan(folderURL)
-        case .failure(let error):
-            errorMessage = error.localizedDescription
         }
     }
 
