@@ -99,19 +99,16 @@ actor DirectFolderImporter {
 
         let report = try await scanner.scan(folderURL: staging)
 
-        if report.isBuildReady {
-            if fm.fileExists(atPath: current.path) {
-                try fm.removeItem(at: current)
-            }
-            try fm.moveItem(at: staging, to: current)
-            return Result(report: report, importedAssetsURL: current)
+        // Runtime imports are now progressive: once BO2 files were physically
+        // materialized and inspected, keep them even when the legacy manifest
+        // is not 100% complete. This lets native runtime work move forward with
+        // the verified Tranzit payload already present instead of repeatedly
+        // filtering/rescanning the same source dump.
+        if fm.fileExists(atPath: current.path) {
+            try fm.removeItem(at: current)
         }
-
-        // An incomplete staging area is not useful for a build. Keep only the
-        // JSON report in the UI and remove partial payloads to avoid later
-        // builds accidentally consuming stale data.
-        try? fm.removeItem(at: staging)
-        return Result(report: report, importedAssetsURL: nil)
+        try fm.moveItem(at: staging, to: current)
+        return Result(report: report, importedAssetsURL: current)
     }
 
     private func coordinatedMaterialize(_ sourceURL: URL, to destination: URL) -> Int64 {
