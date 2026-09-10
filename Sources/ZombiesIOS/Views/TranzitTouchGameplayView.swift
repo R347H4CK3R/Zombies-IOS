@@ -25,6 +25,7 @@ struct TranzitTouchGameplayView: View {
     @State private var structureReport: FastFileStructureReport?
     @State private var prefetchedBytes: UInt64 = 0
     @State private var decodedPayloadReport: T6DecodedPayloadReport?
+    @State private var assetProbeReport: T6ZoneAssetProbeReport?
     @State private var decodedSeed = 0
 
     private var area: TranzitArea { loadedArea.area }
@@ -86,6 +87,10 @@ struct TranzitTouchGameplayView: View {
                             Text("T6 PS3")
                             Text("XCHUNKS \(report.decodedChunkCount)")
                             Text("DECODED \(ByteCountFormatter.string(fromByteCount: Int64(report.decodedBytes), countStyle: .file))")
+                            if let assets = assetProbeReport {
+                                Text("ASSETS \(assets.candidateAssetCount)")
+                                Text("MODELS \(assets.modelLikeCount)")
+                            }
                         }
                         .font(.caption2.bold().monospaced())
                         .foregroundStyle(.green.opacity(0.9))
@@ -240,8 +245,15 @@ struct TranzitTouchGameplayView: View {
             decodedSeed = report.payloadPrefix.prefix(256).reduce(0x146) { partial, byte in
                 ((partial &* 16777619) ^ Int(byte)) & 0x7fffffff
             }
-            runtimeStatus = report.isUsable ? "PLAYABLE + T6 DECODE" : report.status
-            if !report.isUsable {
+
+            let assets = T6ZoneAssetProbe.analyze(report.payloadPrefix)
+            assetProbeReport = assets
+
+            if report.isUsable {
+                runtimeStatus = assets.candidateAssetCount > 0 ? "T6 ASSET INDEX READY" : "PLAYABLE + T6 DECODE"
+                runtimeError = nil
+            } else {
+                runtimeStatus = report.status
                 runtimeError = report.firstError
             }
         } catch {
