@@ -6,6 +6,7 @@ struct ContentView: View {
     @State private var scanning = false
     @State private var report: ScanReport?
     @State private var exportedReportURL: URL?
+    @State private var runtimeIndex: TranzitRuntimeIndex?
     @State private var errorMessage: String?
     @State private var showingFolderPicker = false
     @State private var statusMessage = "Choose your extracted BO2 game folder. The app will read the required Zombies files directly; no ZIP is required."
@@ -98,6 +99,20 @@ struct ContentView: View {
                     }
                 }
 
+                if let runtimeIndex {
+                    Section("Tranzit Runtime") {
+                        LabeledContent("Areas available", value: "\\(runtimeIndex.availableAreas.count)")
+                        LabeledContent("Containers", value: "\\(runtimeIndex.containerFiles.count)")
+                        LabeledContent("Audio banks", value: "\\(runtimeIndex.audioBanks.count)")
+                        LabeledContent("Asset references", value: "\\(runtimeIndex.embeddedReferences.count)")
+                        LabeledContent("Runtime ready", value: runtimeIndex.canEnterRuntime ? "Yes" : "No")
+
+                        ForEach(runtimeIndex.availableAreas) { area in
+                            Label(area.displayName, systemImage: "map")
+                        }
+                    }
+                }
+
                 if let errorMessage {
                     Section("Error") { Text(errorMessage).foregroundStyle(.red) }
                 }
@@ -121,8 +136,9 @@ struct ContentView: View {
         scanning = true
         errorMessage = nil
         report = nil
+        runtimeIndex = nil
         exportedReportURL = nil
-        statusMessage = "Reading BO2 files directly and forcing provider-backed files to download…"
+        statusMessage = "Importing verified BO2 Zombies files for the native Tranzit runtime…"
 
         Task {
             do {
