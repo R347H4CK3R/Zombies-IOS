@@ -204,7 +204,7 @@ actor PS3DumpScanner {
         if let handle = try? FileHandle(forReadingFrom: fileURL) {
             defer { try? handle.close() }
 
-            if let firstByte = try? handle.read(upToCount: 1), firstByte?.isEmpty == false {
+            if let firstByte = try? handle.read(upToCount: 1), firstByte.isEmpty == false {
                 if let end = try? handle.seekToEnd(),
                    end > 0,
                    end < UInt64(impossibleSizeThreshold) {
