@@ -233,7 +233,7 @@ actor PS3DumpScanner {
         }
 
         return ContainerInspection(
-            detectedFormat: detectFormat(fileURL: fileURL, header: header),
+            detectedFormat: detectFormat(fileURL: fileURL, header: header, size: size),
             headerHex: headerHex,
             headerASCII: String(headerASCII),
             bytesInspected: totalRead,
@@ -241,7 +241,7 @@ actor PS3DumpScanner {
         )
     }
 
-    private func detectFormat(fileURL: URL, header: Data) -> String {
+    private func detectFormat(fileURL: URL, header: Data, size: Int64) -> String {
         let ext = fileURL.pathExtension.lowercased()
         let bytes = [UInt8](header.prefix(16))
         let ascii = String(bytes: header.prefix(16), encoding: .ascii) ?? ""
@@ -250,7 +250,13 @@ actor PS3DumpScanner {
         if ascii.hasPrefix("SABS") { return "SABS audio bank" }
         if ascii.hasPrefix("SABL") { return "SABL audio bank" }
         if ascii.uppercased().contains("IPAK") || ext == "ipak" { return "BO2 IPAK archive" }
-        if ext == "ff" { return "BO2 FastFile" }
+        if ext == "ff" {
+            // BO2 uses tiny FastFiles as zone/stub metadata in a few cases.
+            // Label these explicitly so a 512-byte Tranzit stub is not mistaken
+            // for a failed or truncated scan while still preserving FastFile validity.
+            if size <= 1024 { return "BO2 FastFile stub" }
+            return "BO2 FastFile"
+        }
         if ext == "sabs" { return "BO2 SABS audio bank" }
         if ext == "sabl" { return "BO2 SABL audio bank" }
         return ext.isEmpty ? "unknown" : ext.uppercased()
@@ -394,8 +400,11 @@ actor PS3DumpScanner {
         if [".iwi", ".dds", ".png", ".jpg", ".tga"].contains(where: value.hasSuffix) { return "texture" }
         if [".wav", ".mp3", ".xma", ".wem", ".sabs", ".sabl"].contains(where: value.hasSuffix) || value.contains("sound") || value.hasPrefix("snd_") { return "audio" }
         if [".gsc", ".csc", ".cfg"].contains(where: value.hasSuffix) || value.contains("script") { return "script" }
-        if value.contains("zombie") || value.contains("zm_") || value.contains("transit") || value.contains("maps/") { return "map/gameplay" }
+        // Extension-bearing BO2 zone/archive references are containers first.
+        // Previously names such as zm_transit*.ff were mislabeled map/gameplay
+        // because the broad "zm_"/"transit" test ran before the extension test.
         if value.hasSuffix(".ff") || value.hasSuffix(".ipak") { return "container" }
+        if value.contains("zombie") || value.contains("zm_") || value.contains("transit") || value.contains("maps/") { return "map/gameplay" }
         return "unknown"
     }
 
