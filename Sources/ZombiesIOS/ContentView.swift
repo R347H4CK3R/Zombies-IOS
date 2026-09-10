@@ -7,43 +7,60 @@ struct ContentView: View {
     @State private var report: ScanReport?
     @State private var exportedReportURL: URL?
     @State private var errorMessage: String?
-    @State private var statusMessage = "In Files, long-press PS3_GAME.zip → Share → ZombiesIOS, or tap the ZIP and choose ZombiesIOS."
+    @State private var statusMessage = "Share a ZIP containing the BO2 Zombies files listed in the built-in manifest. The full PS3 dump is no longer required."
 
     private let scanner = PS3DumpScanner()
+    private let expectedCount = BO2ZombiesManifest.relativePaths.count
 
     var body: some View {
         NavigationStack {
             List {
-                Section("Import BO2 Data") {
+                Section("Import BO2 Zombies Data") {
                     Text(statusMessage)
                         .font(.callout)
-                    Text("This build copies the ZIP into ZombiesIOS first, then scans the local copy.")
+                    Text("Keep the original PS3_GAME/USRDIR/english paths inside the ZIP. Extra files are ignored.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
                 if scanning {
-                    Section { ProgressView("Importing and scanning…") }
+                    Section { ProgressView("Scanning Zombies manifest files…") }
                 }
 
                 if let report {
-                    Section("Scan Summary") {
-                        LabeledContent("Files", value: report.totalFiles.formatted())
-                        LabeledContent("Zombies candidates", value: report.zombiesCandidates.count.formatted())
-                        LabeledContent("Size", value: ByteCountFormatter.string(fromByteCount: report.totalBytes, countStyle: .file))
+                    Section("Manifest Match") {
+                        LabeledContent("Found", value: "\(report.totalFiles) / \(expectedCount)")
+                        LabeledContent("Known size", value: ByteCountFormatter.string(fromByteCount: report.totalBytes, countStyle: .file))
+
+                        if report.totalFiles < expectedCount {
+                            Text("\(expectedCount - report.totalFiles) manifest file(s) were not present in this ZIP.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
                         if let exportedReportURL {
                             ShareLink(item: exportedReportURL) {
-                                Label("Export JSON Report", systemImage: "square.and.arrow.up")
+                                Label("Export Filtered JSON Report", systemImage: "square.and.arrow.up")
                             }
                         }
                     }
 
-                    Section("Likely Zombies Content") {
-                        ForEach(report.zombiesCandidates.prefix(200)) { file in
+                    Section("Matched Zombies Files") {
+                        ForEach(report.files) { file in
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(file.name)
-                                Text(file.relativePath).font(.caption).foregroundStyle(.secondary)
-                                Text(file.category.rawValue).font(.caption2)
+                                Text(file.relativePath)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                HStack {
+                                    Text(file.category.rawValue)
+                                    if file.size == 0 {
+                                        Text("size unknown")
+                                    } else {
+                                        Text(ByteCountFormatter.string(fromByteCount: file.size, countStyle: .file))
+                                    }
+                                }
+                                .font(.caption2)
                             }
                         }
                     }
@@ -56,7 +73,7 @@ struct ContentView: View {
             .navigationTitle("Zombies Importer")
             .onOpenURL { url in
                 guard url.pathExtension.lowercased() == "zip" else {
-                    errorMessage = "ZombiesIOS received an unsupported file. Share PS3_GAME.zip."
+                    errorMessage = "ZombiesIOS received an unsupported file. Share a ZIP containing the BO2 Zombies manifest files."
                     return
                 }
                 beginZipImport(url)
@@ -95,7 +112,7 @@ struct ContentView: View {
                 }
 
                 await MainActor.run {
-                    statusMessage = "Reading ZIP index (\(ByteCountFormatter.string(fromByteCount: byteSize, countStyle: .file)))…"
+                    statusMessage = "Reading ZIP index (\(ByteCountFormatter.string(fromByteCount: byteSize, countStyle: .file))) and matching Zombies files…"
                 }
 
                 let newReport = try await scanner.scan(zipURL: localZip)
@@ -105,7 +122,7 @@ struct ContentView: View {
                     report = newReport
                     exportedReportURL = reportURL
                     scanning = false
-                    statusMessage = "Import complete. Scanned the local ZIP copy."
+                    statusMessage = "Import complete. Only files from the BO2 Zombies manifest were retained."
                 }
             } catch {
                 await MainActor.run {
@@ -136,7 +153,7 @@ struct ContentView: View {
 
         try fm.createDirectory(at: imports, withIntermediateDirectories: true)
 
-        let destination = imports.appendingPathComponent("PS3_GAME-\(UUID().uuidString).zip")
+        let destination = imports.appendingPathComponent("BO2-Zombies-\(UUID().uuidString).zip")
         var coordinationError: NSError?
         var copyError: Error?
 
