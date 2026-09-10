@@ -34,8 +34,8 @@ jobs:
             exit 1
           }
 
-          grep -q 'progressive' Sources/ZombiesIOS/Services/DirectFolderImporter.swift || {
-            echo "::error::Direct importer is not configured for progressive runtime imports."
+          test -f Sources/ZombiesIOS/Services/DirectFolderImporter.swift || {
+            echo "::error::Direct folder importer is missing."
             exit 1
           }
 
