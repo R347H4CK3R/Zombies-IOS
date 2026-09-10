@@ -21,6 +21,9 @@ actor PS3DumpScanner {
     }
 
     private let impossibleSizeThreshold: Int64 = 1 << 40 // 1 TiB
+    private let readChunkSize = 1024 * 1024
+    private let maxReferencesPerFile = 500
+    private let maxReferenceLength = 180
 
     func scan(folderURL: URL) throws -> ScanReport {
         let accessed = folderURL.startAccessingSecurityScopedResource()
@@ -57,22 +60,18 @@ actor PS3DumpScanner {
             let relative = relativePath(of: fileURL, under: folderURL)
             guard BO2ZombiesManifest.contains(relative) else { continue }
 
-            // Coordinate the read. This is important for iCloud Drive and other
-            // File Provider-backed folders because metadata can remain at zero
-            // until the provider hydrates the child item.
             let size = coordinatedRobustFileSize(for: fileURL, resourceValues: values)
             totalBytes += size
-            results.append(makeScannedFile(path: relative, size: size))
+            let inspection = size > 0 ? inspectContainer(at: fileURL, size: size) : nil
+            results.append(makeScannedFile(path: relative, size: size, inspection: inspection))
         }
 
         guard !results.isEmpty else { throw ScannerError.noManifestMatches }
         return makeReport(name: folderURL.lastPathComponent, results: results, totalBytes: totalBytes)
     }
 
-    /// Scans ZIP metadata directly from the central directory.
-    /// Zero-byte manifest entries are deliberately retained in the report so
-    /// callers can mark the import as incomplete instead of silently treating
-    /// missing payload bytes as a successful match.
+    /// ZIP scanning remains metadata-only. Direct-folder imports are the preferred
+    /// path for deep container inspection because the files are materialized locally.
     func scan(zipURL: URL) throws -> ScanReport {
         guard FileManager.default.fileExists(atPath: zipURL.path) else {
             throw ScannerError.cannotOpenArchive
@@ -94,10 +93,8 @@ actor PS3DumpScanner {
             guard BO2ZombiesManifest.contains(entry.path) else { continue }
 
             let size = sanitizedSize(Int64(entry.uncompressedSize))
-            let scanned = makeScannedFile(path: entry.path, size: size)
+            let scanned = makeScannedFile(path: entry.path, size: size, inspection: nil)
 
-            // If a malformed ZIP contains duplicate manifest paths, retain the
-            // largest logical entry rather than double-counting it.
             let key = normalizedManifestKey(entry.path)
             if let old = resultsByPath[key] {
                 if scanned.size > old.size {
@@ -123,6 +120,148 @@ actor PS3DumpScanner {
             results: results,
             totalBytes: totalBytes
         )
+    }
+
+    private func inspectContainer(at fileURL: URL, size: Int64) -> ContainerInspection? {
+        guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return nil }
+        defer { try? handle.close() }
+
+        var header = Data()
+        var totalRead: Int64 = 0
+        var refs: [AssetReference] = []
+        var seen = Set<String>()
+        var pending = [UInt8]()
+        var pendingOffset: Int64 = 0
+
+        func flushPending() {
+            guard pending.count >= 4 else {
+                pending.removeAll(keepingCapacity: true)
+                return
+            }
+
+            let bytes = pending.prefix(maxReferenceLength)
+            guard let token = String(bytes: bytes, encoding: .ascii)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                  token.count >= 4,
+                  looksLikeAssetReference(token) else {
+                pending.removeAll(keepingCapacity: true)
+                return
+            }
+
+            let normalized = token.replacingOccurrences(of: "\\", with: "/")
+            let key = normalized.lowercased()
+            if !seen.contains(key), refs.count < maxReferencesPerFile {
+                seen.insert(key)
+                refs.append(
+                    AssetReference(
+                        name: normalized,
+                        kind: classifyAssetReference(normalized),
+                        offset: pendingOffset
+                    )
+                )
+            }
+            pending.removeAll(keepingCapacity: true)
+        }
+
+        while true {
+            guard let chunk = try? handle.read(upToCount: readChunkSize), let chunk, !chunk.isEmpty else {
+                break
+            }
+
+            if header.count < 64 {
+                header.append(chunk.prefix(64 - header.count))
+            }
+
+            let bytes = [UInt8](chunk)
+            for (index, byte) in bytes.enumerated() {
+                let absoluteOffset = totalRead + Int64(index)
+                if isPrintableASCII(byte) {
+                    if pending.isEmpty { pendingOffset = absoluteOffset }
+                    if pending.count < maxReferenceLength {
+                        pending.append(byte)
+                    }
+                } else {
+                    flushPending()
+                }
+            }
+
+            totalRead += Int64(chunk.count)
+        }
+
+        flushPending()
+
+        let headerHex = header.prefix(32).map { String(format: "%02X", $0) }.joined(separator: " ")
+        let headerASCII = header.prefix(32).map { byte -> Character in
+            if isPrintableASCII(byte) {
+                return Character(UnicodeScalar(byte))
+            }
+            return "."
+        }
+
+        return ContainerInspection(
+            detectedFormat: detectFormat(fileURL: fileURL, header: header),
+            headerHex: headerHex,
+            headerASCII: String(headerASCII),
+            bytesInspected: totalRead,
+            embeddedAssetReferences: refs
+        )
+    }
+
+    private func detectFormat(fileURL: URL, header: Data) -> String {
+        let ext = fileURL.pathExtension.lowercased()
+        let bytes = [UInt8](header.prefix(16))
+        let ascii = String(bytes: header.prefix(16), encoding: .ascii) ?? ""
+
+        if bytes.starts(with: [0x50, 0x4B, 0x03, 0x04]) { return "ZIP" }
+        if ascii.hasPrefix("SABS") { return "SABS audio bank" }
+        if ascii.hasPrefix("SABL") { return "SABL audio bank" }
+        if ascii.uppercased().contains("IPAK") || ext == "ipak" { return "BO2 IPAK archive" }
+        if ext == "ff" { return "BO2 FastFile" }
+        if ext == "sabs" { return "BO2 SABS audio bank" }
+        if ext == "sabl" { return "BO2 SABL audio bank" }
+        return ext.isEmpty ? "unknown" : ext.uppercased()
+    }
+
+    private func looksLikeAssetReference(_ raw: String) -> Bool {
+        let value = raw.lowercased()
+        if value.count > maxReferenceLength { return false }
+
+        let extensions = [
+            ".iwi", ".dds", ".png", ".jpg", ".tga",
+            ".wav", ".mp3", ".xma", ".wem", ".sabs", ".sabl",
+            ".gsc", ".csc", ".cfg", ".csv", ".str",
+            ".xmodel_bin", ".xanim_bin", ".ff", ".ipak"
+        ]
+
+        if extensions.contains(where: value.hasSuffix) { return true }
+        if value.contains("/") || value.contains("\\") {
+            let keywords = ["weapon", "xmodel", "xanim", "material", "image", "sound", "zombie", "zm_", "transit", "script", "maps/"]
+            return keywords.contains(where: value.contains)
+        }
+
+        let keywords = [
+            "weapon_", "wpn_", "xmodel_", "xanim_", "material_",
+            "zombie_", "zm_", "transit_", "snd_", "sound_"
+        ]
+        return keywords.contains(where: value.hasPrefix)
+    }
+
+    private func classifyAssetReference(_ raw: String) -> String {
+        let value = raw.lowercased()
+        if value.contains("weapon") || value.contains("/wpn") || value.hasPrefix("wpn_") { return "weapon" }
+        if value.contains("xmodel") || value.hasSuffix(".xmodel_bin") { return "model" }
+        if value.contains("xanim") || value.hasSuffix(".xanim_bin") { return "animation" }
+        if value.contains("material") { return "material" }
+        if [".iwi", ".dds", ".png", ".jpg", ".tga"].contains(where: value.hasSuffix) { return "texture" }
+        if [".wav", ".mp3", ".xma", ".wem", ".sabs", ".sabl"].contains(where: value.hasSuffix) || value.contains("sound") || value.hasPrefix("snd_") { return "audio" }
+        if [".gsc", ".csc", ".cfg"].contains(where: value.hasSuffix) || value.contains("script") { return "script" }
+        if value.contains("zombie") || value.contains("zm_") || value.contains("transit") || value.contains("maps/") { return "map/gameplay" }
+        if value.hasSuffix(".ff") || value.hasSuffix(".ipak") { return "container" }
+        return "unknown"
+    }
+
+    private func isPrintableASCII(_ byte: UInt8) -> Bool {
+        byte >= 0x20 && byte <= 0x7E
     }
 
     private func relativePath(of fileURL: URL, under folderURL: URL) -> String {
@@ -156,29 +295,18 @@ actor PS3DumpScanner {
             return coordinatedSize
         }
 
-        // If coordination failed or the provider still reported zero, retry
-        // directly. Some local providers do not need coordination.
         return robustFileSize(for: fileURL, resourceValues: resourceValues)
     }
 
-    /// File Provider / security-scoped URLs on iOS can report a missing or zero
-    /// fileSize even when the file has data. Try progressively stronger
-    /// metadata sources, then force a real provider-backed read/seek.
     private func robustFileSize(
         for fileURL: URL,
         resourceValues: URLResourceValues?
     ) -> Int64 {
         var candidates: [Int64] = []
 
-        if let value = resourceValues?.fileSize {
-            candidates.append(Int64(value))
-        }
-        if let value = resourceValues?.totalFileAllocatedSize {
-            candidates.append(Int64(value))
-        }
-        if let value = resourceValues?.fileAllocatedSize {
-            candidates.append(Int64(value))
-        }
+        if let value = resourceValues?.fileSize { candidates.append(Int64(value)) }
+        if let value = resourceValues?.totalFileAllocatedSize { candidates.append(Int64(value)) }
+        if let value = resourceValues?.fileAllocatedSize { candidates.append(Int64(value)) }
 
         if let freshValues = try? fileURL.resourceValues(forKeys: [
             .fileSizeKey,
@@ -199,8 +327,6 @@ actor PS3DumpScanner {
             return size
         }
 
-        // Opening and reading one byte is intentional: a seek alone is not
-        // sufficient to hydrate every iOS File Provider item.
         if let handle = try? FileHandle(forReadingFrom: fileURL) {
             defer { try? handle.close() }
 
@@ -245,7 +371,7 @@ actor PS3DumpScanner {
         )
     }
 
-    private func makeScannedFile(path: String, size: Int64) -> ScannedFile {
+    private func makeScannedFile(path: String, size: Int64, inspection: ContainerInspection?) -> ScannedFile {
         let normalized = path.replacingOccurrences(of: "\\", with: "/")
         let nsPath = normalized as NSString
         let name = nsPath.lastPathComponent
@@ -257,7 +383,8 @@ actor PS3DumpScanner {
             fileExtension: ext,
             size: size,
             category: classify(path: normalized),
-            isLikelyZombiesContent: true
+            isLikelyZombiesContent: true,
+            inspection: inspection
         )
     }
 
