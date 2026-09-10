@@ -1,16 +1,25 @@
 name: ZombiesIOS
 options:
   bundleIdPrefix: com.r347h4ck3r
+
+packages:
+  ZIPFoundation:
+    url: https://github.com/weichsel/ZIPFoundation.git
+    from: 0.9.19
+
 settings:
   base:
     IPHONEOS_DEPLOYMENT_TARGET: 17.0
     SWIFT_VERSION: 5.0
+
 targets:
   ZombiesIOS:
     type: application
     platform: iOS
     sources:
       - Sources/ZombiesIOS
+    dependencies:
+      - package: ZIPFoundation
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.r347h4ck3r.zombiesios
