@@ -37,28 +37,18 @@ actor TranzitRuntimeLoader {
         var errorDescription: String? {
             switch self {
             case .missingImport:
-                return "No imported BO2 runtime payload exists yet."
+                return "The selected BO2 folder is no longer available."
             case .unreadableResource(let path):
-                return "The imported resource could not be opened: \(path)"
+                return "The BO2 resource could not be opened in place: \(path)"
             case .noAreas:
-                return "No Tranzit area FastFiles were available in the imported payload."
+                return "No Tranzit area FastFiles were available in the selected folder."
             }
         }
     }
 
-    func loadCurrent(report: ScanReport) throws -> TranzitRuntimeSession {
+    func loadCurrent(report: ScanReport, rootURL: URL) throws -> TranzitRuntimeSession {
         let fm = FileManager.default
-        let appSupport = try fm.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        let root = appSupport
-            .appendingPathComponent("ImportedAssets", isDirectory: true)
-            .appendingPathComponent("current", isDirectory: true)
-
-        guard fm.fileExists(atPath: root.path) else {
+        guard fm.fileExists(atPath: rootURL.path) else {
             throw LoaderError.missingImport
         }
 
@@ -71,7 +61,7 @@ actor TranzitRuntimeLoader {
         for area in index.availableAreas {
             let name = area.fastFileStem + ".ff"
             guard let file = filesByName[name] else { continue }
-            let resource = try load(file: file, under: root)
+            let resource = try load(file: file, under: rootURL)
             loadedAreas.append(TranzitLoadedArea(area: area, fastFile: resource))
         }
 
@@ -82,12 +72,12 @@ actor TranzitRuntimeLoader {
         let areaNames = Set(loadedAreas.map { $0.fastFile.fileName.lowercased() })
         let shared = try index.containerFiles
             .filter { !areaNames.contains($0.name.lowercased()) }
-            .map { try load(file: $0, under: root) }
+            .map { try load(file: $0, under: rootURL) }
 
-        let audio = try index.audioBanks.map { try load(file: $0, under: root) }
+        let audio = try index.audioBanks.map { try load(file: $0, under: rootURL) }
 
         return TranzitRuntimeSession(
-            rootURL: root,
+            rootURL: rootURL,
             areas: loadedAreas,
             sharedContainers: shared,
             audioBanks: audio
