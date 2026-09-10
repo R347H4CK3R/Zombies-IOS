@@ -12,3 +12,4 @@ tranzit-runtime-loader 2026-09-09T23:49:00-05:00
 remembered-folder-fix 2026-09-09T23:55:00-05:00
 folder-picker-dialog-fix 2026-09-10T00:05:00-05:00
 first-playable-touch-controls 2026-09-10T00:09:00-05:00
+direct-external-folder-no-copy 2026-09-10T00:16:00-05:00
