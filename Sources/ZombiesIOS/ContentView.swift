@@ -17,7 +17,7 @@ struct ContentView: View {
                 Section("Import BO2 Data") {
                     Text(statusMessage)
                         .font(.callout)
-                    Text("This build receives ZIP files directly from iOS and does not use the blue Open picker button.")
+                    Text("This build copies the ZIP into ZombiesIOS first, then scans the local copy.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -69,25 +69,22 @@ struct ContentView: View {
         errorMessage = nil
         report = nil
         exportedReportURL = nil
-        statusMessage = "Received \(zipURL.lastPathComponent). Preparing import…"
+        statusMessage = "Received \(zipURL.lastPathComponent). Copying into ZombiesIOS…"
 
         Task {
-            let accessed = zipURL.startAccessingSecurityScopedResource()
-            defer { if accessed { zipURL.stopAccessingSecurityScopedResource() } }
-
             do {
+                let localZip = try makeLocalCopy(of: zipURL)
+
                 let fm = FileManager.default
-                let base = fm.temporaryDirectory.appendingPathComponent("PS3Import-\(UUID().uuidString)", isDirectory: true)
-                try fm.createDirectory(at: base, withIntermediateDirectories: true)
-                let localZip = base.appendingPathComponent("PS3_GAME.zip")
-                try fm.copyItem(at: zipURL, to: localZip)
                 let attrs = try fm.attributesOfItem(atPath: localZip.path)
                 let byteSize = (attrs[.size] as? NSNumber)?.int64Value ?? 0
                 guard byteSize >= 4 else {
                     throw ImportError.invalidZip("The received file is empty or too small to be a ZIP archive.")
                 }
 
-                let header = try Data(contentsOf: localZip, options: [.mappedIfSafe]).prefix(4)
+                let handle = try FileHandle(forReadingFrom: localZip)
+                defer { try? handle.close() }
+                let header = try handle.read(upToCount: 4) ?? Data()
                 let validSignatures: [[UInt8]] = [
                     [0x50, 0x4B, 0x03, 0x04],
                     [0x50, 0x4B, 0x05, 0x06],
@@ -97,14 +94,18 @@ struct ContentView: View {
                     throw ImportError.invalidZip("The shared file has a .zip name but does not contain a valid ZIP header.")
                 }
 
-                statusMessage = "Reading ZIP index (\(ByteCountFormatter.string(fromByteCount: byteSize, countStyle: .file)))…"
+                await MainActor.run {
+                    statusMessage = "Reading ZIP index (\(ByteCountFormatter.string(fromByteCount: byteSize, countStyle: .file)))…"
+                }
+
                 let newReport = try await scanner.scan(zipURL: localZip)
                 let reportURL = try ReportExporter.makeJSONFile(from: newReport)
+
                 await MainActor.run {
                     report = newReport
                     exportedReportURL = reportURL
                     scanning = false
-                    statusMessage = "Import complete. Scanned ZIP contents without decompressing the archive."
+                    statusMessage = "Import complete. Scanned the local ZIP copy."
                 }
             } catch {
                 await MainActor.run {
@@ -114,8 +115,8 @@ struct ContentView: View {
                     Domain: \(nsError.domain)
                     Code: \(nsError.code)
                     File: \(zipURL.lastPathComponent)
+                    Source: \(zipURL.path)
                     """
-
                     scanning = false
                     statusMessage = "Import failed."
                 }
@@ -123,28 +124,68 @@ struct ContentView: View {
         }
     }
 
+    private func makeLocalCopy(of sourceURL: URL) throws -> URL {
+        let fm = FileManager.default
+
+        let imports = try fm.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        ).appendingPathComponent("Imports", isDirectory: true)
+
+        try fm.createDirectory(at: imports, withIntermediateDirectories: true)
+
+        let destination = imports.appendingPathComponent("PS3_GAME-\(UUID().uuidString).zip")
+        var coordinationError: NSError?
+        var copyError: Error?
+
+        let accessed = sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessed {
+                sourceURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let coordinator = NSFileCoordinator()
+        coordinator.coordinate(
+            readingItemAt: sourceURL,
+            options: [.withoutChanges],
+            error: &coordinationError
+        ) { coordinatedURL in
+            do {
+                if fm.fileExists(atPath: destination.path) {
+                    try fm.removeItem(at: destination)
+                }
+                try fm.copyItem(at: coordinatedURL, to: destination)
+            } catch {
+                copyError = error
+            }
+        }
+
+        if let copyError {
+            throw copyError
+        }
+        if let coordinationError {
+            throw coordinationError
+        }
+
+        guard fm.fileExists(atPath: destination.path) else {
+            throw ImportError.copyFailed("iOS did not provide a readable local copy of the ZIP.")
+        }
+
+        return destination
+    }
+
     private enum ImportError: LocalizedError {
         case invalidZip(String)
+        case copyFailed(String)
 
         var errorDescription: String? {
             switch self {
-            case .invalidZip(let message): return message
+            case .invalidZip(let message), .copyFailed(let message):
+                return message
             }
         }
-    }
-
-    private func findPS3GameRoot(in extracted: URL) -> URL? {
-        let fm = FileManager.default
-        if fm.fileExists(atPath: extracted.appendingPathComponent("PARAM.SFO").path),
-           fm.fileExists(atPath: extracted.appendingPathComponent("USRDIR").path) { return extracted }
-
-        if let e = fm.enumerator(at: extracted, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) {
-            for case let url as URL in e {
-                if url.lastPathComponent.uppercased() == "PS3_GAME" { return url }
-                if fm.fileExists(atPath: url.appendingPathComponent("PARAM.SFO").path),
-                   fm.fileExists(atPath: url.appendingPathComponent("USRDIR").path) { return url }
-            }
-        }
-        return nil
     }
 }
