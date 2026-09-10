@@ -31,3 +31,4 @@ ps3-signed-fastfile-fingerprint 2026-09-10T18:15:00-05:00
 ps3-fastfile-recognition-root-depth-fix 2026-09-10T17:54:00-05:00
 signed-t6-salsa20-decode 2026-09-10T18:10:00-05:00
 t6-ps3-real-key-decode 2026-09-10T18:20:00-05:00
+t6-zone-asset-index 2026-09-10T18:37:00-05:00
