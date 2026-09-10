@@ -1,11 +1,20 @@
 import SwiftUI
 
 struct TranzitTouchGameplayView: View {
-    let area: TranzitArea
+    let loadedArea: TranzitLoadedArea
+    let rootURL: URL
+    let sharedContainerCount: Int
+    let audioBankCount: Int
+
     @State private var move = CGSize.zero
     @State private var look = CGSize.zero
     @State private var firing = false
     @State private var aiming = false
+    @State private var runtimeStatus = "Checking BO2 stream…"
+    @State private var probedBytes = 0
+    @State private var runtimeError: String?
+
+    private var area: TranzitArea { loadedArea.area }
 
     var body: some View {
         GeometryReader { geo in
@@ -13,14 +22,39 @@ struct TranzitTouchGameplayView: View {
                 LinearGradient(colors: [.black, .gray.opacity(0.45)], startPoint: .top, endPoint: .bottom)
                     .ignoresSafeArea()
 
-                VStack {
+                VStack(spacing: 8) {
                     HStack {
-                        Text(area.displayName.uppercased())
-                            .font(.headline.monospaced()).foregroundStyle(.white)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(area.displayName.uppercased())
+                                .font(.headline.monospaced()).foregroundStyle(.white)
+                            Text(loadedArea.fastFile.fileName)
+                                .font(.caption2.monospaced()).foregroundStyle(.white.opacity(0.65))
+                        }
                         Spacer()
-                        Text("FIRST PLAYABLE")
-                            .font(.caption.bold()).foregroundStyle(.white.opacity(0.75))
-                    }.padding()
+                        VStack(alignment: .trailing, spacing: 3) {
+                            Text(runtimeStatus)
+                                .font(.caption.bold()).foregroundStyle(runtimeError == nil ? .white : .red)
+                            Text(ByteCountFormatter.string(fromByteCount: loadedArea.fastFile.byteCount, countStyle: .file))
+                                .font(.caption2.monospaced()).foregroundStyle(.white.opacity(0.65))
+                        }
+                    }.padding(.horizontal).padding(.top, 8)
+
+                    HStack(spacing: 12) {
+                        Text("STREAM \(probedBytes) B")
+                        Text("SHARED \(sharedContainerCount)")
+                        Text("AUDIO \(audioBankCount)")
+                    }
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.white.opacity(0.55))
+
+                    if let runtimeError {
+                        Text(runtimeError)
+                            .font(.caption2)
+                            .foregroundStyle(.red)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                    }
+
                     Spacer()
                     Text("+").font(.system(size: 34, weight: .light, design: .monospaced)).foregroundStyle(.white.opacity(0.9))
                     Spacer()
@@ -42,7 +76,7 @@ struct TranzitTouchGameplayView: View {
                                 actionButton("FIRE", active: firing) { firing.toggle() }
                             }
                             HStack(spacing: 14) {
-                                actionButton("USE", active: false) { }
+                                actionButton("USE", active: false) { probeRuntimeResource() }
                                 actionButton("JUMP", active: false) { }
                             }
                         }
@@ -51,9 +85,29 @@ struct TranzitTouchGameplayView: View {
                 }
             }
         }
-        .navigationTitle("Touch Gameplay")
+        .navigationTitle("Touch Runtime")
         .navigationBarTitleDisplayMode(.inline)
         .preferredColorScheme(.dark)
+        .task { probeRuntimeResource() }
+    }
+
+    private func probeRuntimeResource() {
+        let fileURL = rootURL.appendingPathComponent(loadedArea.fastFile.relativePath)
+        do {
+            let handle = try FileHandle(forReadingFrom: fileURL)
+            defer { try? handle.close() }
+            let data = try handle.read(upToCount: 4096) ?? Data()
+            guard !data.isEmpty else {
+                throw CocoaError(.fileReadUnknown)
+            }
+            probedBytes = data.count
+            runtimeStatus = "BO2 STREAM ONLINE"
+            runtimeError = nil
+        } catch {
+            probedBytes = 0
+            runtimeStatus = "STREAM OFFLINE"
+            runtimeError = "Runtime could not continue reading \(loadedArea.fastFile.fileName): \(error.localizedDescription)"
+        }
     }
 
     private func controlZone(size: CGSize, isMove: Bool) -> some View {
