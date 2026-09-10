@@ -7,12 +7,14 @@ struct ContentView: View {
     @State private var report: ScanReport?
     @State private var exportedReportURL: URL?
     @State private var runtimeIndex: TranzitRuntimeIndex?
+    @State private var runtimeSession: TranzitRuntimeSession?
     @State private var errorMessage: String?
     @State private var showingFolderPicker = false
     @State private var statusMessage = "Choose your extracted BO2 game folder. The app will read the required Zombies files directly; no ZIP is required."
 
     private let scanner = PS3DumpScanner()
     private let directFolderImporter = DirectFolderImporter()
+    private let runtimeLoader = TranzitRuntimeLoader()
     private let expectedCount = BO2ZombiesManifest.relativePaths.count
 
     var body: some View {
@@ -110,6 +112,17 @@ struct ContentView: View {
                         ForEach(runtimeIndex.availableAreas) { area in
                             Label(area.displayName, systemImage: "map")
                         }
+
+                        if let runtimeSession {
+                            LabeledContent("Loaded areas", value: "\(runtimeSession.areas.count)")
+                            LabeledContent("Loaded bytes", value: ByteCountFormatter.string(fromByteCount: runtimeSession.totalLoadedBytes, countStyle: .file))
+                        }
+
+                        Button {
+                            prepareRuntime()
+                        } label: {
+                            Label(runtimeSession == nil ? "Load Tranzit Runtime" : "Reload Tranzit Runtime", systemImage: "play.circle")
+                        }
                     }
                 }
 
@@ -137,6 +150,7 @@ struct ContentView: View {
         errorMessage = nil
         report = nil
         runtimeIndex = nil
+        runtimeSession = nil
         exportedReportURL = nil
         statusMessage = "Importing verified BO2 Zombies files for the native Tranzit runtime…"
 
@@ -153,9 +167,23 @@ struct ContentView: View {
 
                     if let importedURL = result.importedAssetsURL {
                         let index = TranzitRuntimeIndex(report: result.report)
-                        statusMessage = "Imported \(result.report.totalFiles) verified BO2 files into \(importedURL.lastPathComponent). Tranzit runtime index found \(index.availableAreas.count) area resource groups. Runtime work can continue without a complete legacy manifest."
+                        statusMessage = "Imported \(result.report.totalFiles) verified BO2 files into \(importedURL.lastPathComponent). Tranzit runtime index found \(index.availableAreas.count) area resource groups. Loading runtime resources now."
                     } else {
                         statusMessage = "No usable BO2 payload was persisted."
+                    }
+                }
+
+                if result.importedAssetsURL != nil {
+                    do {
+                        let session = try await runtimeLoader.loadCurrent(report: result.report)
+                        await MainActor.run {
+                            runtimeSession = session
+                            statusMessage = "Import complete. Tranzit runtime opened \(session.areas.count) area groups, \(session.sharedContainers.count) shared containers, and \(session.audioBanks.count) audio banks."
+                        }
+                    } catch {
+                        await MainActor.run {
+                            errorMessage = "Runtime load failed: \(error.localizedDescription)"
+                        }
                     }
                 }
             } catch {
@@ -169,6 +197,31 @@ struct ContentView: View {
                     """
                     scanning = false
                     statusMessage = "Direct import failed."
+                }
+            }
+        }
+    }
+
+    private func prepareRuntime() {
+        guard let report else { return }
+        scanning = true
+        errorMessage = nil
+        statusMessage = "Opening imported Tranzit containers and area resources…"
+
+        Task {
+            do {
+                let session = try await runtimeLoader.loadCurrent(report: report)
+                await MainActor.run {
+                    runtimeSession = session
+                    scanning = false
+                    statusMessage = "Tranzit runtime loaded \(session.areas.count) area resource groups, \(session.sharedContainers.count) shared containers, and \(session.audioBanks.count) audio banks."
+                }
+            } catch {
+                await MainActor.run {
+                    runtimeSession = nil
+                    scanning = false
+                    errorMessage = "Runtime load failed: \(error.localizedDescription)"
+                    statusMessage = "Imported files were kept, but the runtime loader found a resource problem."
                 }
             }
         }
