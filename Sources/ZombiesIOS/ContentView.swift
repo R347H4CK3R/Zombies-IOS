@@ -81,24 +81,54 @@ struct ContentView: View {
                 try fm.createDirectory(at: base, withIntermediateDirectories: true)
                 let localZip = base.appendingPathComponent("PS3_GAME.zip")
                 try fm.copyItem(at: zipURL, to: localZip)
-                let extracted = base.appendingPathComponent("Extracted", isDirectory: true)
-                try fm.createDirectory(at: extracted, withIntermediateDirectories: true)
-                try fm.unzipItem(at: localZip, to: extracted)
-                let scanRoot = findPS3GameRoot(in: extracted) ?? extracted
-                let newReport = try await scanner.scan(folderURL: scanRoot)
+                let attrs = try fm.attributesOfItem(atPath: localZip.path)
+                let byteSize = (attrs[.size] as? NSNumber)?.int64Value ?? 0
+                guard byteSize >= 4 else {
+                    throw ImportError.invalidZip("The received file is empty or too small to be a ZIP archive.")
+                }
+
+                let header = try Data(contentsOf: localZip, options: [.mappedIfSafe]).prefix(4)
+                let validSignatures: [[UInt8]] = [
+                    [0x50, 0x4B, 0x03, 0x04],
+                    [0x50, 0x4B, 0x05, 0x06],
+                    [0x50, 0x4B, 0x07, 0x08]
+                ]
+                guard validSignatures.contains(Array(header)) else {
+                    throw ImportError.invalidZip("The shared file has a .zip name but does not contain a valid ZIP header.")
+                }
+
+                statusMessage = "Reading ZIP index (\(ByteCountFormatter.string(fromByteCount: byteSize, countStyle: .file)))…"
+                let newReport = try await scanner.scan(zipURL: localZip)
                 let reportURL = try ReportExporter.makeJSONFile(from: newReport)
                 await MainActor.run {
                     report = newReport
                     exportedReportURL = reportURL
                     scanning = false
-                    statusMessage = "Import complete."
+                    statusMessage = "Import complete. Scanned ZIP contents without decompressing the archive."
                 }
             } catch {
                 await MainActor.run {
-                    errorMessage = "ZIP import failed: \(error.localizedDescription)"
+                    let nsError = error as NSError
+                    errorMessage = """
+                    ZIP import failed: \(error.localizedDescription)
+                    Domain: \(nsError.domain)
+                    Code: \(nsError.code)
+                    File: \(zipURL.lastPathComponent)
+                    """
+
                     scanning = false
                     statusMessage = "Import failed."
                 }
+            }
+        }
+    }
+
+    private enum ImportError: LocalizedError {
+        case invalidZip(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidZip(let message): return message
             }
         }
     }
