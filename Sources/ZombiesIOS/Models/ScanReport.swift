@@ -66,7 +66,42 @@ struct ScanReport: Codable {
         files.reduce(0) { $0 + ($1.inspection?.assetReferenceCount ?? 0) }
     }
 
+    var incompleteReadFiles: [ScannedFile] {
+        files.filter { file in
+            guard file.size > 0, let inspection = file.inspection else { return false }
+            return inspection.bytesInspected != file.size
+        }
+    }
+
+    var uninspectedContainerFiles: [ScannedFile] {
+        let deepInspectionExtensions: Set<String> = ["ff", "ipak", "sabs", "sabl"]
+        return files.filter {
+            $0.size > 0 && deepInspectionExtensions.contains($0.fileExtension) && $0.inspection == nil
+        }
+    }
+
+    var formatMismatchFiles: [ScannedFile] {
+        files.filter { file in
+            guard let format = file.inspection?.detectedFormat.lowercased() else { return false }
+            switch file.fileExtension {
+            case "ff": return !format.contains("fastfile")
+            case "ipak": return !format.contains("ipak")
+            case "sabs": return !format.contains("sabs")
+            case "sabl": return !format.contains("sabl")
+            default: return false
+            }
+        }
+    }
+
+    var integrityIssueCount: Int {
+        zeroByteFiles.count + incompleteReadFiles.count + uninspectedContainerFiles.count + formatMismatchFiles.count
+    }
+
     var isBuildReady: Bool {
-        missingManifestCount == 0 && zeroByteFiles.isEmpty
+        missingManifestCount == 0 &&
+        zeroByteFiles.isEmpty &&
+        incompleteReadFiles.isEmpty &&
+        uninspectedContainerFiles.isEmpty &&
+        formatMismatchFiles.isEmpty
     }
 }
