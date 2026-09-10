@@ -12,7 +12,7 @@ struct ContentView: View {
     @State private var showingFolderPicker = false
     @State private var showingFilePicker = false
     @State private var rememberedFolderName: String?
-    @State private var statusMessage = "Choose your BO2 game folder once. ZombiesIOS will remember it for future launches."
+    @State private var statusMessage = "Choose your BO2 game folder once. ZombiesIOS will remember it and read it in place without copying it into app storage."
     @State private var showingImportDialog = false
     @State private var importDialogTitle = ""
     @State private var importDialogMessage = ""
@@ -34,12 +34,12 @@ struct ContentView: View {
                         Label(rememberedFolderName == nil ? "Choose BO2 Game Folder" : "Use Remembered Game Folder", systemImage: "folder.fill")
                     }.disabled(scanning)
                     Button { showingFilePicker = true } label: { Label("Choose BO2 File Instead", systemImage: "doc.fill") }.disabled(scanning)
-                    Text("If iOS will not let you select a folder, choose a BO2 file such as EBOOT.BIN or common_zm.ff. ZombiesIOS will use that file's containing folder and scan from there.")
+                    Text("The selected BO2 folder stays where it is. ZombiesIOS stores only the bookmark and small scan metadata; it does not copy the game folder into the app container. If iOS will not let you select a folder, choose a BO2 file such as EBOOT.BIN or common_zm.ff and ZombiesIOS will use that file's containing folder.")
                         .font(.caption).foregroundStyle(.secondary)
                     if rememberedFolderName != nil { Button("Change Remembered Folder") { showingFolderPicker = true }.disabled(scanning) }
                 }
 
-                if scanning { Section { ProgressView("Loading BO2 runtime files…") } }
+                if scanning { Section { ProgressView("Reading BO2 runtime files in place…") } }
 
                 if let report {
                     Section("Import Inventory") {
@@ -137,20 +137,21 @@ struct ContentView: View {
     private func clearRememberedFolder(message: String) { UserDefaults.standard.removeObject(forKey: bookmarkKey); rememberedFolderName = nil; statusMessage = message }
 
     private func beginFolderImport(_ folderURL: URL) {
-        scanning = true; errorMessage = nil; report = nil; runtimeIndex = nil; runtimeSession = nil; statusMessage = "Loading BO2 runtime files…"
-        showImportDialog(kind: .loading, title: "Loading BO2 Files", message: "Reading \(folderURL.lastPathComponent) and importing the available Zombies runtime files.")
+        scanning = true; errorMessage = nil; report = nil; runtimeIndex = nil; runtimeSession = nil; statusMessage = "Reading BO2 runtime files directly from the selected folder…"
+        showImportDialog(kind: .loading, title: "Loading BO2 Files", message: "Reading \(folderURL.lastPathComponent) in place. The game folder will not be copied into ZombiesIOS app storage.")
         Task {
             let accessed = folderURL.startAccessingSecurityScopedResource(); defer { if accessed { folderURL.stopAccessingSecurityScopedResource() } }
             do {
                 guard FileManager.default.fileExists(atPath: folderURL.path) else { throw DirectFolderImporter.ImportError.cannotAccessFolder }
                 let result = try await directFolderImporter.importFolder(folderURL)
+                guard let sourceRoot = result.importedAssetsURL else { throw DirectFolderImporter.ImportError.cannotAccessFolder }
                 let index = TranzitRuntimeIndex(report: result.report)
-                let session = try await runtimeLoader.loadCurrent(report: result.report)
+                let session = try await runtimeLoader.loadCurrent(report: result.report, rootURL: sourceRoot)
                 await MainActor.run {
                     report = result.report; runtimeIndex = index; runtimeSession = session; scanning = false
                     let target = index.firstPlayableArea?.displayName ?? "none"
-                    statusMessage = "Tranzit runtime loaded. First playable target: \(target)."
-                    showImportDialog(kind: .success, title: "BO2 Load Complete", message: "Found \(result.report.totalFiles) BO2 files. Loaded \(session.areas.count) Tranzit area group(s). First playable target: \(target).")
+                    statusMessage = "Tranzit runtime loaded directly from the remembered folder. First playable target: \(target)."
+                    showImportDialog(kind: .success, title: "BO2 Load Complete", message: "Found \(result.report.totalFiles) BO2 files and loaded \(session.areas.count) Tranzit area group(s) directly from the selected folder. No game files were copied into app storage. First playable target: \(target).")
                 }
             } catch {
                 await MainActor.run {
