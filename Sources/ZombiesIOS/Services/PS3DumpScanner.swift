@@ -223,8 +223,19 @@ actor PS3DumpScanner {
     }
 
     private func looksLikeAssetReference(_ raw: String) -> Bool {
-        let value = raw.lowercased()
-        if value.count > maxReferenceLength { return false }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 4, trimmed.count <= maxReferenceLength else { return false }
+
+        // BO2 asset identifiers in these containers are conventionally lowercase
+        // ASCII paths/names. Requiring that shape eliminates printable binary noise
+        // such as "zM_!XW", "W.ddS", "J.fF", and "?1.Ff".
+        guard trimmed == trimmed.lowercased() else { return false }
+
+        let value = trimmed.replacingOccurrences(of: "\\", with: "/")
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789_./-")
+        guard value.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { return false }
+        guard value.rangeOfCharacter(from: .letters) != nil else { return false }
+        guard !value.contains(".."), !value.hasPrefix("."), !value.hasSuffix(".") else { return false }
 
         let extensions = [
             ".iwi", ".dds", ".png", ".jpg", ".tga",
@@ -233,15 +244,35 @@ actor PS3DumpScanner {
             ".xmodel_bin", ".xanim_bin", ".ff", ".ipak"
         ]
 
-        if extensions.contains(where: value.hasSuffix) { return true }
-        if value.contains("/") || value.contains("\\") {
-            let keywords = ["weapon", "xmodel", "xanim", "material", "image", "sound", "zombie", "zm_", "transit", "script", "maps/"]
+        if let ext = extensions.first(where: value.hasSuffix) {
+            let stem = String(value.dropLast(ext.count))
+            guard stem.count >= 4 else { return false }
+
+            // Very short extension-bearing strings are common accidental matches
+            // in compressed/binary payloads. Keep them only when their naming shape
+            // clearly resembles a known BO2 asset family or contains a real path.
+            if value.count < 9 && !value.contains("/") {
+                let knownPrefixes = [
+                    "zm_", "zmb_", "weapon_", "wpn_", "xmodel_", "xanim_",
+                    "material_", "snd_", "sound_", "transit_", "ui_", "code_",
+                    "common_", "patch_", "so_"
+                ]
+                guard knownPrefixes.contains(where: value.hasPrefix) else { return false }
+            }
+            return true
+        }
+
+        if value.contains("/") {
+            let keywords = [
+                "weapon", "xmodel", "xanim", "material", "image", "sound",
+                "zombie", "zm_", "transit", "script", "maps/"
+            ]
             return keywords.contains(where: value.contains)
         }
 
         let keywords = [
             "weapon_", "wpn_", "xmodel_", "xanim_", "material_",
-            "zombie_", "zm_", "transit_", "snd_", "sound_"
+            "zombie_", "zmb_", "zm_", "transit_", "snd_", "sound_"
         ]
         return keywords.contains(where: value.hasPrefix)
     }
