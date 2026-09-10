@@ -9,15 +9,25 @@ struct T6DecodedPayloadReport: Sendable {
     let payloadPrefix: Data
     let zoneSize: UInt32?
     let externalZoneSize: UInt32?
+    let xBlockSizes: [UInt32]
     let firstError: String?
 
+    var xBlockTotalBytes: UInt64 {
+        xBlockSizes.reduce(0) { $0 + UInt64($1) }
+    }
+
+    var hasSaneXBlocks: Bool {
+        xBlockSizes.count == 8 && xBlockTotalBytes <= 0x3C000000
+    }
+
     var isUsable: Bool {
-        decodedChunkCount > 0 && !payloadPrefix.isEmpty && firstError == nil
+        decodedChunkCount > 0 && !payloadPrefix.isEmpty && firstError == nil && hasSaneXBlocks
     }
 
     var status: String {
         if let firstError { return "T6 DECODE ERROR: \(firstError)" }
-        return decodedChunkCount > 0 ? "T6 PAYLOAD DECODED" : "T6 PAYLOAD EMPTY"
+        if decodedChunkCount == 0 { return "T6 PAYLOAD EMPTY" }
+        return hasSaneXBlocks ? "T6 XFILE STRUCTURE OK" : "T6 XFILE BLOCK ERROR"
     }
 }
 
@@ -130,6 +140,13 @@ actor T6PS3PayloadDecoder {
 
         let zoneSize = prefix.count >= 4 ? Self.littleEndianUInt32(prefix, offset: 0) : nil
         let externalSize = prefix.count >= 8 ? Self.littleEndianUInt32(prefix, offset: 4) : nil
+        var blockSizes: [UInt32] = []
+        if prefix.count >= 40 {
+            blockSizes.reserveCapacity(8)
+            for index in 0..<8 {
+                blockSizes.append(Self.littleEndianUInt32(prefix, offset: 8 + index * 4))
+            }
+        }
 
         return T6DecodedPayloadReport(
             compressedBytesRead: compressedRead,
@@ -140,6 +157,7 @@ actor T6PS3PayloadDecoder {
             payloadPrefix: prefix,
             zoneSize: zoneSize,
             externalZoneSize: externalSize,
+            xBlockSizes: blockSizes,
             firstError: nil
         )
     }
