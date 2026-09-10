@@ -39,6 +39,8 @@ struct TranzitRuntimeIndex {
     let containerFiles: [ScannedFile]
     let audioBanks: [ScannedFile]
     let embeddedReferences: [AssetReference]
+    let firstPlayableArea: TranzitArea?
+    let firstPlayableFastFile: ScannedFile?
 
     init(report: ScanReport) {
         let names = Set(report.files.map { $0.name.lowercased() })
@@ -58,9 +60,23 @@ struct TranzitRuntimeIndex {
         embeddedReferences = report.files.flatMap {
             $0.inspection?.embeddedAssetReferences ?? []
         }
+
+        // Do not pick tiny preallocation/stub fastfiles as a playable target.
+        // Among real Tranzit area fastfiles, start with the smallest payload so
+        // the native gameplay/rendering loop can be proven with minimal memory.
+        let usableAreas: [(TranzitArea, ScannedFile)] = TranzitArea.allCases.compactMap { area in
+            guard let file = report.files.first(where: {
+                $0.name.lowercased() == area.fastFileStem + ".ff" && $0.size > 4_096
+            }) else { return nil }
+            return (area, file)
+        }
+        .sorted { $0.1.size < $1.1.size }
+
+        firstPlayableArea = usableAreas.first?.0
+        firstPlayableFastFile = usableAreas.first?.1
     }
 
     var canEnterRuntime: Bool {
-        !availableAreas.isEmpty && !containerFiles.isEmpty
+        firstPlayableArea != nil && !containerFiles.isEmpty
     }
 }
