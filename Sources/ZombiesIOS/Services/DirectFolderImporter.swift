@@ -117,6 +117,7 @@ actor DirectFolderImporter {
     private func coordinatedMaterialize(_ sourceURL: URL, to destination: URL) -> Int64 {
         let fm = FileManager.default
         var bytesWritten: Int64 = 0
+        var expectedBytes: Int64?
         var coordinationError: NSError?
         let coordinator = NSFileCoordinator()
 
@@ -126,6 +127,12 @@ actor DirectFolderImporter {
             error: &coordinationError
         ) { coordinatedURL in
             do {
+                if let attributes = try? fm.attributesOfItem(atPath: coordinatedURL.path),
+                   let number = attributes[.size] as? NSNumber,
+                   number.int64Value > 0 {
+                    expectedBytes = number.int64Value
+                }
+
                 if fm.fileExists(atPath: destination.path) {
                     try fm.removeItem(at: destination)
                 }
@@ -153,6 +160,11 @@ actor DirectFolderImporter {
 
         if coordinationError != nil && bytesWritten == 0 {
             try? fm.removeItem(at: destination)
+        }
+
+        if let expectedBytes, expectedBytes != bytesWritten {
+            try? fm.removeItem(at: destination)
+            return 0
         }
 
         return bytesWritten
