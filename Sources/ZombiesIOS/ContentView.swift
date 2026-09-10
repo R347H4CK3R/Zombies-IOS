@@ -35,15 +35,15 @@ struct ContentView: View {
                 }
 
                 if scanning {
-                    Section { ProgressView("Scanning Zombies manifest files…") }
+                    Section { ProgressView("Importing BO2 runtime files…") }
                 }
 
                 if let report {
-                    Section("Manifest Match") {
+                    Section("Import Inventory") {
                         LabeledContent("Found", value: "\(report.totalFiles) / \(expectedCount)")
                         LabeledContent("Known size", value: ByteCountFormatter.string(fromByteCount: report.totalBytes, countStyle: .file))
                         LabeledContent("Zero-byte files", value: "\(report.zeroByteFiles.count)")
-                        LabeledContent("Build ready", value: report.isBuildReady ? "Yes" : "No")
+                        LabeledContent("Legacy manifest complete", value: report.isBuildReady ? "Yes" : "No")
 
                         if report.missingManifestCount > 0 {
                             Text("\(report.missingManifestCount) manifest file(s) were not present.")
@@ -101,10 +101,10 @@ struct ContentView: View {
 
                 if let runtimeIndex {
                     Section("Tranzit Runtime") {
-                        LabeledContent("Areas available", value: "\\(runtimeIndex.availableAreas.count)")
-                        LabeledContent("Containers", value: "\\(runtimeIndex.containerFiles.count)")
-                        LabeledContent("Audio banks", value: "\\(runtimeIndex.audioBanks.count)")
-                        LabeledContent("Asset references", value: "\\(runtimeIndex.embeddedReferences.count)")
+                        LabeledContent("Areas available", value: "\(runtimeIndex.availableAreas.count)")
+                        LabeledContent("Containers", value: "\(runtimeIndex.containerFiles.count)")
+                        LabeledContent("Audio banks", value: "\(runtimeIndex.audioBanks.count)")
+                        LabeledContent("Asset references", value: "\(runtimeIndex.embeddedReferences.count)")
                         LabeledContent("Runtime ready", value: runtimeIndex.canEnterRuntime ? "Yes" : "No")
 
                         ForEach(runtimeIndex.availableAreas) { area in
@@ -147,15 +147,15 @@ struct ContentView: View {
 
                 await MainActor.run {
                     report = result.report
+                    runtimeIndex = TranzitRuntimeIndex(report: result.report)
                     exportedReportURL = reportURL
                     scanning = false
 
-                    if result.report.isBuildReady, let importedURL = result.importedAssetsURL {
-                        statusMessage = "Direct import verified. All manifest files were physically read and copied to \(importedURL.lastPathComponent). Build ready."
-                    } else if !result.report.zeroByteFiles.isEmpty {
-                        statusMessage = "Direct import found \(result.report.zeroByteFiles.count) source file(s) that still returned zero bytes after a real read. Those source files themselves need to be restored/re-copied."
+                    if let importedURL = result.importedAssetsURL {
+                        let index = TranzitRuntimeIndex(report: result.report)
+                        statusMessage = "Imported \(result.report.totalFiles) verified BO2 files into \(importedURL.lastPathComponent). Tranzit runtime index found \(index.availableAreas.count) area resource groups. Runtime work can continue without a complete legacy manifest."
                     } else {
-                        statusMessage = "Direct import is missing \(result.report.missingManifestCount) required manifest file(s)."
+                        statusMessage = "No usable BO2 payload was persisted."
                     }
                 }
             } catch {
