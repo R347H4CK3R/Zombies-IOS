@@ -20,3 +20,4 @@ persistent-runtime-stream 2026-09-10T17:02:00-05:00
 incremental-fastfile-stream 2026-09-10T17:08:00-05:00
 fastfile-structure-prefetch 2026-09-10T17:12:00-05:00
 native-playable-fps 2026-09-10T17:18:00-05:00
+combat-loop-playable 2026-09-10T17:23:00-05:00
