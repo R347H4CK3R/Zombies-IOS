@@ -132,6 +132,7 @@ actor PS3DumpScanner {
         var seen = Set<String>()
         var pending = [UInt8]()
         var pendingOffset: Int64 = 0
+        var discardingOversizedToken = false
 
         func flushPending() {
             guard pending.count >= 4 else {
@@ -161,6 +162,7 @@ actor PS3DumpScanner {
                 )
             }
             pending.removeAll(keepingCapacity: true)
+            discardingOversizedToken = false
         }
 
         while true {
@@ -175,13 +177,27 @@ actor PS3DumpScanner {
             let bytes = [UInt8](chunk)
             for (index, byte) in bytes.enumerated() {
                 let absoluteOffset = totalRead + Int64(index)
-                if isPrintableASCII(byte) {
+                // Carve candidate identifiers on BO2-name characters instead of
+                // every printable byte. The old logic merged valid names with nearby
+                // spaces/punctuation into one rejected string, which hid references.
+                if isAssetTokenByte(byte) {
+                    if discardingOversizedToken { continue }
                     if pending.isEmpty { pendingOffset = absoluteOffset }
                     if pending.count < maxReferenceLength {
                         pending.append(byte)
+                    } else {
+                        // Ignore a clearly oversized printable/binary run until the
+                        // next delimiter instead of emitting misleading fragments.
+                        pending.removeAll(keepingCapacity: true)
+                        discardingOversizedToken = true
                     }
                 } else {
-                    flushPending()
+                    if discardingOversizedToken {
+                        pending.removeAll(keepingCapacity: true)
+                        discardingOversizedToken = false
+                    } else {
+                        flushPending()
+                    }
                 }
             }
 
@@ -293,6 +309,17 @@ actor PS3DumpScanner {
 
     private func isPrintableASCII(_ byte: UInt8) -> Bool {
         byte >= 0x20 && byte <= 0x7E
+    }
+
+    private func isAssetTokenByte(_ byte: UInt8) -> Bool {
+        switch byte {
+        case 0x61...0x7A, 0x30...0x39: // a-z, 0-9
+            return true
+        case 0x5F, 0x2E, 0x2F, 0x5C, 0x2D: // _ . / \\ -
+            return true
+        default:
+            return false
+        }
     }
 
     private func relativePath(of fileURL: URL, under folderURL: URL) -> String {
