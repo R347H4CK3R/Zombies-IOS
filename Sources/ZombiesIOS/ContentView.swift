@@ -139,6 +139,13 @@ struct ContentView: View {
 
                 let newReport = try await scanner.scan(zipURL: localZip)
                 let reportURL = try ReportExporter.makeJSONFile(from: newReport)
+                let importedAssetsURL: URL?
+
+                if newReport.isBuildReady {
+                    importedAssetsURL = try extractVerifiedManifest(from: localZip, report: newReport)
+                } else {
+                    importedAssetsURL = nil
+                }
 
                 await MainActor.run {
                     report = newReport
@@ -146,7 +153,11 @@ struct ContentView: View {
                     scanning = false
 
                     if newReport.isBuildReady {
-                        statusMessage = "Import verified. All manifest files are present and non-empty."
+                        if let importedAssetsURL {
+                            statusMessage = "Import verified. All manifest files are present, non-empty, and copied locally to \(importedAssetsURL.lastPathComponent)."
+                        } else {
+                            statusMessage = "Import verified. All manifest files are present and non-empty."
+                        }
                     } else if !newReport.zeroByteFiles.isEmpty {
                         statusMessage = "Import scanned, but \(newReport.zeroByteFiles.count) manifest file(s) contain 0 bytes. Re-copy those source files before building."
                     } else {
@@ -264,6 +275,77 @@ struct ContentView: View {
         }
 
         return destination
+    }
+
+    private func extractVerifiedManifest(from zipURL: URL, report: ScanReport) throws -> URL {
+        guard report.isBuildReady else {
+            throw ImportError.copyFailed("BO2 Zombies payload extraction was blocked because the scan is incomplete.")
+        }
+
+        let fm = FileManager.default
+        let appSupport = try fm.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let root = appSupport.appendingPathComponent("ImportedAssets", isDirectory: true)
+        let staging = root.appendingPathComponent("staging-\(UUID().uuidString)", isDirectory: true)
+        let current = root.appendingPathComponent("current", isDirectory: true)
+
+        try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+
+        do {
+            let archive = try Archive(url: zipURL, accessMode: .read)
+            var extractedPaths = Set<String>()
+
+            for entry in archive where entry.type == .file {
+                guard BO2ZombiesManifest.contains(entry.path) else { continue }
+                guard entry.uncompressedSize > 0 else {
+                    throw ImportError.copyFailed("Refusing to extract zero-byte BO2 payload: \(entry.path)")
+                }
+
+                let normalized = entry.path.replacingOccurrences(of: "\\", with: "/")
+                guard !normalized.hasPrefix("/"),
+                      !normalized.split(separator: "/").contains("..") else {
+                    throw ImportError.copyFailed("Unsafe ZIP path rejected: \(entry.path)")
+                }
+
+                let destination = staging.appendingPathComponent(normalized)
+                try fm.createDirectory(
+                    at: destination.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                _ = try archive.extract(entry, to: destination)
+
+                let attributes = try fm.attributesOfItem(atPath: destination.path)
+                let copiedSize = (attributes[.size] as? NSNumber)?.int64Value ?? 0
+                guard copiedSize == Int64(entry.uncompressedSize), copiedSize > 0 else {
+                    throw ImportError.copyFailed(
+                        "Extracted BO2 payload failed size verification: \(entry.path)"
+                    )
+                }
+                extractedPaths.insert(normalized.lowercased())
+            }
+
+            let expectedPaths = Set(report.files.map {
+                $0.relativePath.replacingOccurrences(of: "\\", with: "/").lowercased()
+            })
+            guard extractedPaths == expectedPaths else {
+                throw ImportError.copyFailed(
+                    "Extracted BO2 payload set does not match the verified scan report."
+                )
+            }
+
+            if fm.fileExists(atPath: current.path) {
+                try fm.removeItem(at: current)
+            }
+            try fm.moveItem(at: staging, to: current)
+            return current
+        } catch {
+            try? fm.removeItem(at: staging)
+            throw error
+        }
     }
 
     private func removeStaleImports(in imports: URL) throws {
