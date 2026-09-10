@@ -3,6 +3,10 @@ name: Build iOS IPA
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/build-trigger.txt'
 
 permissions:
   contents: write
