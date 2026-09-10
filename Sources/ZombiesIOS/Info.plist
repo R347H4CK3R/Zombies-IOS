@@ -17,23 +17,26 @@
   <key>CFBundleShortVersionString</key>
   <string>1.0</string>
   <key>CFBundleVersion</key>
-  <string>2</string>
+  <string>3</string>
   <key>CFBundleDocumentTypes</key>
   <array>
     <dict>
       <key>CFBundleTypeName</key>
-      <string>ZIP Archive</string>
+      <string>BO2 Game Files</string>
       <key>CFBundleTypeRole</key>
       <string>Viewer</string>
       <key>LSHandlerRank</key>
       <string>Alternate</string>
       <key>LSItemContentTypes</key>
       <array>
-        <string>public.zip-archive</string>
+        <string>public.data</string>
+        <string>public.folder</string>
       </array>
     </dict>
   </array>
   <key>LSSupportsOpeningDocumentsInPlace</key>
+  <true/>
+  <key>UISupportsDocumentBrowser</key>
   <false/>
   <key>UILaunchScreen</key>
   <dict/>
