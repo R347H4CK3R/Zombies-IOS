@@ -17,6 +17,8 @@ struct TranzitTouchGameplayView: View {
     @State private var anchorSamples = 0
     @State private var runtimeError: String?
     @State private var streaming = false
+    @State private var structureReport: FastFileStructureReport?
+    @State private var prefetchedBytes: UInt64 = 0
 
     private var area: TranzitArea { loadedArea.area }
 
@@ -49,12 +51,38 @@ struct TranzitTouchGameplayView: View {
 
                     HStack(spacing: 12) {
                         Text("READ \(ByteCountFormatter.string(fromByteCount: Int64(streamedBytes), countStyle: .file))")
+                        Text("PREFETCH \(ByteCountFormatter.string(fromByteCount: Int64(prefetchedBytes), countStyle: .file))")
                         Text("ANCHORS \(anchorSamples)/3")
+                    }
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.white.opacity(0.55))
+
+                    if let report = structureReport {
+                        VStack(spacing: 2) {
+                            HStack(spacing: 10) {
+                                Text(report.summary)
+                                Text("UNIQUE \(report.uniqueByteCount)")
+                                Text(String(format: "NONZERO %.0f%%", report.nonZeroRatio * 100))
+                                Text(String(format: "ASCII %.0f%%", report.printableRatio * 100))
+                            }
+                            Text("SIG \(report.signatureHex)")
+                                .lineLimit(1)
+                            if !report.asciiTokens.isEmpty {
+                                Text(report.asciiTokens.prefix(3).joined(separator: " • "))
+                                    .lineLimit(1)
+                            }
+                        }
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.white.opacity(0.62))
+                        .padding(.horizontal)
+                    }
+
+                    HStack(spacing: 12) {
                         Text("SHARED \(sharedContainerCount)")
                         Text("AUDIO \(audioBankCount)")
                     }
                     .font(.caption2.monospaced())
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.white.opacity(0.5))
 
                     if let runtimeError {
                         Text(runtimeError)
@@ -86,7 +114,7 @@ struct TranzitTouchGameplayView: View {
                             }
                             HStack(spacing: 14) {
                                 actionButton(streaming ? "READ…" : "STREAM", active: streaming) { streamNextChunk() }
-                                actionButton("JUMP", active: false) { }
+                                actionButton("PREFETCH", active: streaming) { prefetchBurst() }
                             }
                         }
                         stick(position: look, label: "LOOK")
@@ -106,9 +134,11 @@ struct TranzitTouchGameplayView: View {
         let reader = FastFileStreamReader(rootURL: rootURL, resource: loadedArea.fastFile)
         do {
             let samples = try await reader.sampleAnchors()
+            let analysis = FastFileRuntimeAnalyzer.analyze(chunks: samples)
             anchorSamples = samples.count
+            structureReport = analysis
             streamedBytes = UInt64(samples.reduce(0) { $0 + $1.data.count })
-            runtimeStatus = samples.count >= 3 ? "BO2 STREAM READY" : "BO2 STREAM PARTIAL"
+            runtimeStatus = analysis.looksStructured ? "BO2 DATA READY" : "BO2 DATA READABLE"
             streaming = false
             streamNextChunk()
         } catch {
@@ -147,6 +177,46 @@ struct TranzitTouchGameplayView: View {
         }
     }
 
+    private func prefetchBurst() {
+        guard !streaming else { return }
+        streaming = true
+        runtimeError = nil
+
+        Task {
+            let reader = FastFileStreamReader(rootURL: rootURL, resource: loadedArea.fastFile)
+            let fileSize = UInt64(max(0, loadedArea.fastFile.byteCount))
+            var offset = streamOffset < fileSize ? streamOffset : 0
+            var total: UInt64 = 0
+            var lastProgress = streamProgress
+
+            do {
+                for _ in 0..<8 {
+                    let chunk = try await reader.read(offset: offset, length: 64 * 1024)
+                    total += UInt64(chunk.data.count)
+                    lastProgress = chunk.progress
+                    offset = chunk.nextOffset
+                    if offset >= chunk.fileSize { break }
+                }
+
+                await MainActor.run {
+                    streamedBytes += total
+                    prefetchedBytes += total
+                    streamOffset = offset >= fileSize ? 0 : offset
+                    streamProgress = lastProgress
+                    runtimeStatus = "PREFETCH READY"
+                    runtimeError = nil
+                    streaming = false
+                }
+            } catch {
+                await MainActor.run {
+                    runtimeStatus = "PREFETCH ERROR"
+                    runtimeError = "Bounded prefetch failed: \(error.localizedDescription)"
+                    streaming = false
+                }
+            }
+        }
+    }
+
     private func controlZone(size: CGSize, isMove: Bool) -> some View {
         Color.clear
             .contentShape(Rectangle())
@@ -172,7 +242,7 @@ struct TranzitTouchGameplayView: View {
     private func actionButton(_ title: String, active: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title).font(.caption.bold()).foregroundStyle(.white)
-                .frame(width: 66, height: 52)
+                .frame(width: 72, height: 52)
                 .background(active ? .white.opacity(0.35) : .white.opacity(0.15), in: RoundedRectangle(cornerRadius: 14))
                 .overlay(RoundedRectangle(cornerRadius: 14).stroke(.white.opacity(0.3)))
         }
