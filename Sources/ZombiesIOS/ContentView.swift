@@ -1,8 +1,10 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import ZIPFoundation
 
 struct ContentView: View {
     @State private var showingFolderImporter = false
+    @State private var showingZipImporter = false
     @State private var scanning = false
     @State private var report: ScanReport?
     @State private var exportedReportURL: URL?
@@ -19,14 +21,19 @@ struct ContentView: View {
                     }
                     .disabled(scanning)
 
-                    Text("In Files, open PS3_GAME so you can see PARAM.SFO and USRDIR, then tap Open.")
+                    Button("Import PS3_GAME ZIP (recommended)") {
+                        showingZipImporter = true
+                    }
+                    .disabled(scanning)
+
+                    Text("If the blue Open button does nothing on iOS, compress PS3_GAME in Files and import the ZIP instead.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
                 if scanning {
                     Section {
-                        ProgressView("Scanning selected folder…")
+                        ProgressView("Preparing and scanning…")
                     }
                 }
 
@@ -81,7 +88,86 @@ struct ContentView: View {
                     errorMessage = error.localizedDescription
                 }
             }
+            .fileImporter(
+                isPresented: $showingZipImporter,
+                allowedContentTypes: [.zip],
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    guard let url = urls.first else {
+                        errorMessage = "No ZIP file was selected."
+                        return
+                    }
+                    beginZipImport(url)
+                case .failure(let error):
+                    errorMessage = error.localizedDescription
+                }
+            }
         }
+    }
+
+    private func beginZipImport(_ zipURL: URL) {
+        scanning = true
+        errorMessage = nil
+        exportedReportURL = nil
+        report = nil
+
+        Task {
+            let accessed = zipURL.startAccessingSecurityScopedResource()
+            defer {
+                if accessed { zipURL.stopAccessingSecurityScopedResource() }
+            }
+
+            do {
+                let fm = FileManager.default
+                let base = fm.temporaryDirectory.appendingPathComponent("PS3Import-\(UUID().uuidString)", isDirectory: true)
+                try fm.createDirectory(at: base, withIntermediateDirectories: true)
+
+                let localZip = base.appendingPathComponent("PS3_GAME.zip")
+                try fm.copyItem(at: zipURL, to: localZip)
+
+                let extracted = base.appendingPathComponent("Extracted", isDirectory: true)
+                try fm.createDirectory(at: extracted, withIntermediateDirectories: true)
+                try fm.unzipItem(at: localZip, to: extracted)
+
+                let scanRoot = findPS3GameRoot(in: extracted) ?? extracted
+                let newReport = try await scanner.scan(folderURL: scanRoot)
+                let reportURL = try ReportExporter.makeJSONFile(from: newReport)
+
+                await MainActor.run {
+                    report = newReport
+                    exportedReportURL = reportURL
+                    scanning = false
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = "ZIP import failed: \(error.localizedDescription)"
+                    scanning = false
+                }
+            }
+        }
+    }
+
+    private func findPS3GameRoot(in extracted: URL) -> URL? {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: extracted.appendingPathComponent("PARAM.SFO").path),
+           fm.fileExists(atPath: extracted.appendingPathComponent("USRDIR").path) {
+            return extracted
+        }
+
+        if let e = fm.enumerator(at: extracted, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) {
+            for case let url as URL in e {
+                if url.lastPathComponent.uppercased() == "PS3_GAME" {
+                    return url
+                }
+                if fm.fileExists(atPath: url.appendingPathComponent("PARAM.SFO").path),
+                   fm.fileExists(atPath: url.appendingPathComponent("USRDIR").path) {
+                    return url
+                }
+            }
+        }
+        return nil
     }
 
     private func beginScan(_ folder: URL) {
