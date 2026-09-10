@@ -1,16 +1,26 @@
 import Foundation
+import ZIPFoundation
 
 actor PS3DumpScanner {
-    enum ScannerError: Error {
+    enum ScannerError: LocalizedError {
         case cannotAccessFolder
         case unableToEnumerate
+        case cannotOpenArchive
+        case emptyArchive
+
+        var errorDescription: String? {
+            switch self {
+            case .cannotAccessFolder: return "The selected folder could not be accessed."
+            case .unableToEnumerate: return "The selected folder could not be enumerated."
+            case .cannotOpenArchive: return "The ZIP archive could not be opened."
+            case .emptyArchive: return "The ZIP archive contains no files."
+            }
+        }
     }
 
     func scan(folderURL: URL) throws -> ScanReport {
         let accessed = folderURL.startAccessingSecurityScopedResource()
-        defer {
-            if accessed { folderURL.stopAccessingSecurityScopedResource() }
-        }
+        defer { if accessed { folderURL.stopAccessingSecurityScopedResource() } }
 
         guard FileManager.default.fileExists(atPath: folderURL.path) else {
             throw ScannerError.cannotAccessFolder
@@ -39,31 +49,74 @@ actor PS3DumpScanner {
                 of: folderURL.path.hasSuffix("/") ? folderURL.path : folderURL.path + "/",
                 with: ""
             )
-
-            results.append(
-                ScannedFile(
-                    relativePath: relative,
-                    name: fileURL.lastPathComponent,
-                    fileExtension: fileURL.pathExtension.lowercased(),
-                    size: size,
-                    category: classify(fileURL),
-                    isLikelyZombiesContent: isLikelyZombies(fileURL)
-                )
-            )
+            results.append(makeScannedFile(path: relative, size: size))
         }
 
-        return ScanReport(
+        return makeReport(name: folderURL.lastPathComponent, results: results, totalBytes: totalBytes)
+    }
+
+    /// Scans ZIP metadata directly from the central directory.
+    /// This intentionally does not decompress the archive, so a bad/unsupported
+    /// compressed entry cannot prevent the importer from producing its report.
+    func scan(zipURL: URL) throws -> ScanReport {
+        guard FileManager.default.fileExists(atPath: zipURL.path) else {
+            throw ScannerError.cannotOpenArchive
+        }
+
+        let archive: Archive
+        do {
+            archive = try Archive(url: zipURL, accessMode: .read)
+        } catch {
+            throw ScannerError.cannotOpenArchive
+        }
+
+        var results: [ScannedFile] = []
+        var totalBytes: Int64 = 0
+
+        for entry in archive {
+            guard entry.type == .file else { continue }
+            let size = Int64(entry.uncompressedSize)
+            totalBytes += size
+            results.append(makeScannedFile(path: entry.path, size: size))
+        }
+
+        guard !results.isEmpty else { throw ScannerError.emptyArchive }
+        return makeReport(name: zipURL.deletingPathExtension().lastPathComponent,
+                          results: results,
+                          totalBytes: totalBytes)
+    }
+
+    private func makeReport(name: String, results: [ScannedFile], totalBytes: Int64) -> ScanReport {
+        ScanReport(
             createdAt: Date(),
-            selectedFolderName: folderURL.lastPathComponent,
+            selectedFolderName: name,
             totalFiles: results.count,
             totalBytes: totalBytes,
-            files: results.sorted { $0.relativePath.localizedCaseInsensitiveCompare($1.relativePath) == .orderedAscending }
+            files: results.sorted {
+                $0.relativePath.localizedCaseInsensitiveCompare($1.relativePath) == .orderedAscending
+            }
         )
     }
 
-    private func classify(_ url: URL) -> FileCategory {
-        let ext = url.pathExtension.lowercased()
-        let name = url.lastPathComponent.lowercased()
+    private func makeScannedFile(path: String, size: Int64) -> ScannedFile {
+        let normalized = path.replacingOccurrences(of: "\\", with: "/")
+        let nsPath = normalized as NSString
+        let name = nsPath.lastPathComponent
+        let ext = (name as NSString).pathExtension.lowercased()
+
+        return ScannedFile(
+            relativePath: normalized,
+            name: name,
+            fileExtension: ext,
+            size: size,
+            category: classify(path: normalized),
+            isLikelyZombiesContent: isLikelyZombies(path: normalized)
+        )
+    }
+
+    private func classify(path: String) -> FileCategory {
+        let name = (path as NSString).lastPathComponent.lowercased()
+        let ext = (name as NSString).pathExtension.lowercased()
 
         if ext == "ff" { return .fastFile }
         if ["gsc", "csc", "cfg"].contains(ext) { return .script }
@@ -76,13 +129,13 @@ actor PS3DumpScanner {
         return .unknown
     }
 
-    private func isLikelyZombies(_ url: URL) -> Bool {
-        let path = url.path.lowercased()
+    private func isLikelyZombies(path: String) -> Bool {
+        let p = "/" + path.lowercased().replacingOccurrences(of: "\\", with: "/")
         let tokens = [
-            "/zm_", "\\zm_", "zombie", "zombies", "tomb", "buried",
+            "/zm_", "zombie", "zombies", "tomb", "buried",
             "nuketown", "transit", "tranzit", "die_rise", "mob_of_the_dead",
             "origins", "greenrun", "town", "farm", "bus_depot"
         ]
-        return tokens.contains { path.contains($0) }
+        return tokens.contains { p.contains($0) }
     }
 }
