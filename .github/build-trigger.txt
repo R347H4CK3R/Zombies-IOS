@@ -1,0 +1,1 @@
+Build trigger file. Update this file only when an IPA build is intentionally requested.
