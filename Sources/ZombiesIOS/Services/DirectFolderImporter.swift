@@ -63,7 +63,8 @@ actor DirectFolderImporter {
 
         var matchedCount = 0
 
-        for case let sourceURL as URL in enumerator {
+        while let next = enumerator.nextObject() {
+            guard let sourceURL = next as? URL else { continue }
             let values = try? sourceURL.resourceValues(forKeys: Set(keys))
             guard values?.isRegularFile == true else { continue }
 
@@ -194,7 +195,7 @@ actor DirectFolderImporter {
         let byName = BO2ZombiesManifest.relativePaths.filter {
             ($0 as NSString).lastPathComponent.lowercased() == lowerName
         }
-        return byName.count == 1 ? byName[0] : nil
+        return byName.count == 1 ? byName.first : nil
     }
 
     private func manifestMatch(_ candidate: String) -> String? {
