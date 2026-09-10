@@ -32,4 +32,16 @@ struct ScanReport: Codable {
     var zombiesCandidates: [ScannedFile] {
         files.filter(\.isLikelyZombiesContent)
     }
+
+    var zeroByteFiles: [ScannedFile] {
+        files.filter { $0.size == 0 }
+    }
+
+    var missingManifestCount: Int {
+        max(0, BO2ZombiesManifest.relativePaths.count - totalFiles)
+    }
+
+    var isBuildReady: Bool {
+        missingManifestCount == 0 && zeroByteFiles.isEmpty
+    }
 }
