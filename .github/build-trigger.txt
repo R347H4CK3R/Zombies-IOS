@@ -4,3 +4,5 @@ manual-build 2026-09-09T23:08:00-05:00
 scanner-utf16-filter-hardening
 manual-build 2026-09-09T23:27:00-05:00
 scanner-deep-reference-v2
+manual-build 2026-09-09T23:38:00-05:00
+tranzit-stub-container-fix
