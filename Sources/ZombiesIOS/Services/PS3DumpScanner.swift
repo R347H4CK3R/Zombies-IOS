@@ -30,7 +30,13 @@ actor PS3DumpScanner {
             throw ScannerError.cannotAccessFolder
         }
 
-        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey, .nameKey]
+        let keys: [URLResourceKey] = [
+            .isRegularFileKey,
+            .fileSizeKey,
+            .fileAllocatedSizeKey,
+            .totalFileAllocatedSizeKey,
+            .nameKey
+        ]
         guard let enumerator = FileManager.default.enumerator(
             at: folderURL,
             includingPropertiesForKeys: keys,
@@ -53,8 +59,7 @@ actor PS3DumpScanner {
 
             guard BO2ZombiesManifest.contains(relative) else { continue }
 
-            let rawSize = Int64(values?.fileSize ?? 0)
-            let size = sanitizedSize(rawSize)
+            let size = robustFileSize(for: fileURL, resourceValues: values)
             totalBytes += size
             results.append(makeScannedFile(path: relative, size: size))
         }
@@ -102,6 +107,52 @@ actor PS3DumpScanner {
             results: results,
             totalBytes: totalBytes
         )
+    }
+
+    /// File Provider / security-scoped URLs on iOS can report a missing or zero
+    /// `fileSize` even when the file has data. Try progressively stronger
+    /// metadata sources, then use FileHandle.seekToEnd() as the final fallback.
+    /// This does not read the full file into memory.
+    private func robustFileSize(
+        for fileURL: URL,
+        resourceValues: URLResourceValues?
+    ) -> Int64 {
+        var candidates: [Int64] = []
+
+        if let value = resourceValues?.fileSize {
+            candidates.append(Int64(value))
+        }
+        if let value = resourceValues?.totalFileAllocatedSize {
+            candidates.append(Int64(value))
+        }
+        if let value = resourceValues?.fileAllocatedSize {
+            candidates.append(Int64(value))
+        }
+
+        if let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
+           let number = attributes[.size] as? NSNumber {
+            candidates.append(number.int64Value)
+        }
+
+        // Prefer any believable non-zero metadata result.
+        if let size = candidates.first(where: { $0 > 0 && $0 < impossibleSizeThreshold }) {
+            return size
+        }
+
+        // Some iOS File Provider items expose 0 in metadata until the item is
+        // actually opened. Seeking to EOF forces the provider-backed handle to
+        // expose the logical file length without loading the entire file.
+        if let handle = try? FileHandle(forReadingFrom: fileURL) {
+            defer { try? handle.close() }
+            if let end = try? handle.seekToEnd(),
+               end > 0,
+               end < UInt64(impossibleSizeThreshold) {
+                return Int64(end)
+            }
+        }
+
+        // A genuinely empty file remains zero.
+        return 0
     }
 
     private func sanitizedSize(_ size: Int64) -> Int64 {
