@@ -10,6 +10,7 @@ struct ContentView: View {
     @State private var statusMessage = "Share a ZIP containing the BO2 Zombies files listed in the built-in manifest. The full PS3 dump is no longer required."
 
     private let scanner = PS3DumpScanner()
+    private let directFolderImporter = DirectFolderImporter()
     private let expectedCount = BO2ZombiesManifest.relativePaths.count
 
     var body: some View {
