@@ -24,17 +24,20 @@ struct TranzitTouchGameplayView: View {
     @State private var streaming = false
     @State private var structureReport: FastFileStructureReport?
     @State private var prefetchedBytes: UInt64 = 0
+    @State private var decodedPayloadReport: T6DecodedPayloadReport?
+    @State private var decodedSeed = 0
 
     private var area: TranzitArea { loadedArea.area }
 
     private var sceneSeed: Int {
-        loadedArea.fastFile.header.reduce(0xB02) { partial, byte in
+        let base = loadedArea.fastFile.header.reduce(0xB02) { partial, byte in
             ((partial &* 16777619) ^ Int(byte)) & 0x7fffffff
         }
+        return (base ^ decodedSeed) & 0x7fffffff
     }
 
     var body: some View {
-        GeometryReader { geo in
+        GeometryReader { _ in
             ZStack {
                 NativeFPSSceneView(
                     move: move,
@@ -48,6 +51,7 @@ struct TranzitTouchGameplayView: View {
                     kills: $kills,
                     mapSeed: sceneSeed
                 )
+                .id(sceneSeed)
                 .ignoresSafeArea()
 
                 VStack(spacing: 6) {
@@ -77,7 +81,18 @@ struct TranzitTouchGameplayView: View {
                     .padding(.top, 6)
                     .background(.black.opacity(0.28))
 
-                    if let report = structureReport {
+                    if let report = decodedPayloadReport {
+                        HStack(spacing: 9) {
+                            Text("T6 PS3")
+                            Text("XCHUNKS \(report.decodedChunkCount)")
+                            Text("DECODED \(ByteCountFormatter.string(fromByteCount: Int64(report.decodedBytes), countStyle: .file))")
+                        }
+                        .font(.caption2.bold().monospaced())
+                        .foregroundStyle(.green.opacity(0.9))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(.black.opacity(0.34), in: Capsule())
+                    } else if let report = structureReport {
                         HStack(spacing: 9) {
                             Text(report.summary)
                             Text("BO2 STREAM \(Int(streamProgress * 100))%")
@@ -173,6 +188,7 @@ struct TranzitTouchGameplayView: View {
             runtimeStatus = analysis.looksStructured ? "BO2 DATA READY" : "BO2 DATA READABLE"
             streaming = false
             await prefetchInitialBurst()
+            await decodeT6Payload()
         } catch {
             streaming = false
             runtimeStatus = "STREAM OFFLINE"
@@ -208,6 +224,29 @@ struct TranzitTouchGameplayView: View {
             runtimeStatus = "PLAYABLE / STREAM ERROR"
             runtimeError = "Gameplay is running, but BO2 prefetch failed: \(error.localizedDescription)"
             streaming = false
+        }
+    }
+
+    private func decodeT6Payload() async {
+        let decoder = T6PS3PayloadDecoder()
+        do {
+            let report = try await decoder.decodePrefix(
+                rootURL: rootURL,
+                resource: loadedArea.fastFile,
+                maxDecodedBytes: 4 * 1024 * 1024,
+                maxChunks: 256
+            )
+            decodedPayloadReport = report
+            decodedSeed = report.payloadPrefix.prefix(256).reduce(0x146) { partial, byte in
+                ((partial &* 16777619) ^ Int(byte)) & 0x7fffffff
+            }
+            runtimeStatus = report.isUsable ? "PLAYABLE + T6 DECODE" : report.status
+            if !report.isUsable {
+                runtimeError = report.firstError
+            }
+        } catch {
+            runtimeStatus = "PLAYABLE / T6 DECODE ERROR"
+            runtimeError = "Native map is playable, but the T6 PS3 payload decoder failed: \(error.localizedDescription)"
         }
     }
 
