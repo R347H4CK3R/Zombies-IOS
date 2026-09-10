@@ -22,80 +22,93 @@ struct TranzitTouchGameplayView: View {
 
     private var area: TranzitArea { loadedArea.area }
 
+    private var sceneSeed: Int {
+        loadedArea.fastFile.header.reduce(0xB02) { partial, byte in
+            ((partial &* 16777619) ^ Int(byte)) & 0x7fffffff
+        }
+    }
+
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                LinearGradient(colors: [.black, .gray.opacity(0.45)], startPoint: .top, endPoint: .bottom)
-                    .ignoresSafeArea()
+                NativeFPSSceneView(
+                    move: move,
+                    look: look,
+                    firing: firing,
+                    aiming: aiming,
+                    mapSeed: sceneSeed
+                )
+                .ignoresSafeArea()
 
-                VStack(spacing: 8) {
+                VStack(spacing: 6) {
                     HStack {
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2) {
                             Text(area.displayName.uppercased())
                                 .font(.headline.monospaced()).foregroundStyle(.white)
                             Text(loadedArea.fastFile.fileName)
-                                .font(.caption2.monospaced()).foregroundStyle(.white.opacity(0.65))
+                                .font(.caption2.monospaced()).foregroundStyle(.white.opacity(0.72))
                         }
                         Spacer()
-                        VStack(alignment: .trailing, spacing: 3) {
+                        VStack(alignment: .trailing, spacing: 2) {
                             Text(runtimeStatus)
                                 .font(.caption.bold()).foregroundStyle(runtimeError == nil ? .white : .red)
                             Text(ByteCountFormatter.string(fromByteCount: loadedArea.fastFile.byteCount, countStyle: .file))
-                                .font(.caption2.monospaced()).foregroundStyle(.white.opacity(0.65))
+                                .font(.caption2.monospaced()).foregroundStyle(.white.opacity(0.72))
                         }
-                    }.padding(.horizontal).padding(.top, 8)
+                    }
+                    .padding(.horizontal)
+                    .padding(.top, 6)
+                    .background(.black.opacity(0.36))
 
                     ProgressView(value: streamProgress)
                         .padding(.horizontal)
                         .tint(.white)
 
-                    HStack(spacing: 12) {
+                    HStack(spacing: 10) {
                         Text("READ \(ByteCountFormatter.string(fromByteCount: Int64(streamedBytes), countStyle: .file))")
                         Text("PREFETCH \(ByteCountFormatter.string(fromByteCount: Int64(prefetchedBytes), countStyle: .file))")
-                        Text("ANCHORS \(anchorSamples)/3")
+                        Text("A \(anchorSamples)/3")
                     }
                     .font(.caption2.monospaced())
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.white.opacity(0.65))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(.black.opacity(0.34), in: Capsule())
 
                     if let report = structureReport {
-                        VStack(spacing: 2) {
-                            HStack(spacing: 10) {
-                                Text(report.summary)
-                                Text("UNIQUE \(report.uniqueByteCount)")
-                                Text(String(format: "NONZERO %.0f%%", report.nonZeroRatio * 100))
-                                Text(String(format: "ASCII %.0f%%", report.printableRatio * 100))
-                            }
-                            Text("SIG \(report.signatureHex)")
-                                .lineLimit(1)
-                            if !report.asciiTokens.isEmpty {
-                                Text(report.asciiTokens.prefix(3).joined(separator: " • "))
-                                    .lineLimit(1)
-                            }
+                        HStack(spacing: 9) {
+                            Text(report.summary)
+                            Text("U \(report.uniqueByteCount)")
+                            Text(String(format: "NZ %.0f%%", report.nonZeroRatio * 100))
                         }
                         .font(.caption2.monospaced())
                         .foregroundStyle(.white.opacity(0.62))
-                        .padding(.horizontal)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(.black.opacity(0.3), in: Capsule())
                     }
-
-                    HStack(spacing: 12) {
-                        Text("SHARED \(sharedContainerCount)")
-                        Text("AUDIO \(audioBankCount)")
-                    }
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.white.opacity(0.5))
 
                     if let runtimeError {
                         Text(runtimeError)
                             .font(.caption2)
                             .foregroundStyle(.red)
                             .multilineTextAlignment(.center)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 8))
                             .padding(.horizontal)
                     }
 
                     Spacer()
-                    Text("+").font(.system(size: 34, weight: .light, design: .monospaced)).foregroundStyle(.white.opacity(0.9))
+
+                    Text("+")
+                        .font(.system(size: aiming ? 24 : 34, weight: .light, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.95))
+                        .shadow(radius: 2)
+
                     Spacer()
                 }
+                .allowsHitTesting(false)
 
                 HStack(spacing: 0) {
                     controlZone(size: geo.size, isMove: true)
@@ -107,22 +120,24 @@ struct TranzitTouchGameplayView: View {
                     HStack(alignment: .bottom) {
                         stick(position: move, label: "MOVE")
                         Spacer()
-                        VStack(spacing: 14) {
-                            HStack(spacing: 14) {
+                        VStack(spacing: 12) {
+                            HStack(spacing: 12) {
                                 actionButton("ADS", active: aiming) { aiming.toggle() }
                                 actionButton("FIRE", active: firing) { firing.toggle() }
                             }
-                            HStack(spacing: 14) {
+                            HStack(spacing: 12) {
                                 actionButton(streaming ? "READ…" : "STREAM", active: streaming) { streamNextChunk() }
                                 actionButton("PREFETCH", active: streaming) { prefetchBurst() }
                             }
                         }
                         stick(position: look, label: "LOOK")
-                    }.padding(.horizontal, 18).padding(.bottom, 12)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
                 }
             }
         }
-        .navigationTitle("Touch Runtime")
+        .navigationTitle("Playable Runtime")
         .navigationBarTitleDisplayMode(.inline)
         .preferredColorScheme(.dark)
         .task { await validateStream() }
@@ -163,7 +178,7 @@ struct TranzitTouchGameplayView: View {
                     streamedBytes += UInt64(chunk.data.count)
                     streamOffset = chunk.nextOffset >= chunk.fileSize ? 0 : chunk.nextOffset
                     streamProgress = chunk.progress
-                    runtimeStatus = "STREAMING BO2 DATA"
+                    runtimeStatus = "PLAYABLE + STREAMING"
                     runtimeError = nil
                     streaming = false
                 }
@@ -232,19 +247,19 @@ struct TranzitTouchGameplayView: View {
 
     private func stick(position: CGSize, label: String) -> some View {
         ZStack {
-            Circle().fill(.white.opacity(0.10)).frame(width: 112, height: 112)
-            Circle().stroke(.white.opacity(0.28), lineWidth: 1).frame(width: 112, height: 112)
+            Circle().fill(.black.opacity(0.28)).frame(width: 112, height: 112)
+            Circle().stroke(.white.opacity(0.3), lineWidth: 1).frame(width: 112, height: 112)
             Circle().fill(.white.opacity(0.35)).frame(width: 48, height: 48).offset(position)
-            Text(label).font(.caption2.bold()).foregroundStyle(.white.opacity(0.65)).offset(y: 72)
+            Text(label).font(.caption2.bold()).foregroundStyle(.white.opacity(0.7)).offset(y: 72)
         }.frame(width: 130, height: 145)
     }
 
     private func actionButton(_ title: String, active: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(title).font(.caption.bold()).foregroundStyle(.white)
+            Text(title).font(.caption2.bold()).foregroundStyle(.white)
                 .frame(width: 72, height: 52)
-                .background(active ? .white.opacity(0.35) : .white.opacity(0.15), in: RoundedRectangle(cornerRadius: 14))
-                .overlay(RoundedRectangle(cornerRadius: 14).stroke(.white.opacity(0.3)))
+                .background(active ? .white.opacity(0.38) : .black.opacity(0.35), in: RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(.white.opacity(0.35)))
         }
     }
 }
