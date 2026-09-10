@@ -20,6 +20,15 @@ targets:
       - Sources/ZombiesIOS
     dependencies:
       - package: ZIPFoundation
+    info:
+      properties:
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: ZIP Archive
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.zip-archive
+        LSSupportsOpeningDocumentsInPlace: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.r347h4ck3r.zombiesios
