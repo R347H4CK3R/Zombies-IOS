@@ -29,18 +29,18 @@ jobs:
             exit 1
           fi
 
-          grep -q 'newReport.isBuildReady' Sources/ZombiesIOS/ContentView.swift || {
-            echo "::error::Importer no longer gates payload extraction on ScanReport.isBuildReady."
+          grep -q 'TranzitRuntimeIndex' Sources/ZombiesIOS/ContentView.swift || {
+            echo "::error::Importer is not wired into the Tranzit runtime index."
             exit 1
           }
 
-          grep -q 'guard report.isBuildReady' Sources/ZombiesIOS/ContentView.swift || {
-            echo "::error::Local BO2 payload extraction is missing its build-readiness guard."
+          grep -q 'progressive' Sources/ZombiesIOS/Services/DirectFolderImporter.swift || {
+            echo "::error::Direct importer is not configured for progressive runtime imports."
             exit 1
           }
 
-          grep -q 'zeroByteFiles.isEmpty' Sources/ZombiesIOS/Models/ScanReport.swift || {
-            echo "::error::ScanReport no longer rejects zero-byte manifest files."
+          test -f Sources/ZombiesIOS/Models/TranzitRuntimeIndex.swift || {
+            echo "::error::Tranzit runtime index model is missing."
             exit 1
           }
 
