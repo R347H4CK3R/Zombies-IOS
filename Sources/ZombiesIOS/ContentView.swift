@@ -8,6 +8,7 @@ struct ContentView: View {
     @State private var runtimeSession: TranzitRuntimeSession?
     @State private var errorMessage: String?
     @State private var showingFolderPicker = false
+    @State private var showingFilePicker = false
     @State private var rememberedFolderName: String?
     @State private var statusMessage = "Choose your BO2 game folder once. ZombiesIOS will remember it for future launches."
 
@@ -37,6 +38,17 @@ struct ContentView: View {
                         )
                     }
                     .disabled(scanning)
+
+                    Button {
+                        showingFilePicker = true
+                    } label: {
+                        Label("Choose BO2 File Instead", systemImage: "doc.fill")
+                    }
+                    .disabled(scanning)
+
+                    Text("If iOS will not let you select a folder, choose a BO2 file such as EBOOT.BIN or common_zm.ff. ZombiesIOS will use that file's containing folder and scan from there.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
                     if rememberedFolderName != nil {
                         Button("Change Remembered Folder") {
@@ -98,6 +110,21 @@ struct ContentView: View {
                     }
                 )
             }
+            .fileImporter(
+                isPresented: $showingFilePicker,
+                allowedContentTypes: [.data],
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    guard let fileURL = urls.first else { return }
+                    let folderURL = fileURL.deletingLastPathComponent()
+                    remember(folder: folderURL)
+                    beginFolderImport(folderURL)
+                case .failure(let error):
+                    errorMessage = "BO2 file selection failed: \(error.localizedDescription)"
+                }
+            }
             .task {
                 restoreRememberedFolderName()
             }
@@ -122,9 +149,6 @@ struct ContentView: View {
             rememberedFolderName = url.lastPathComponent
             errorMessage = nil
         } catch {
-            // A bookmark failure must not block the current import. The user can
-            // still use the selected directory for this launch and choose it
-            // again later if the provider does not support persistent bookmarks.
             errorMessage = "The folder can be used now, but iOS could not save it for the next launch: \(error.localizedDescription)"
         }
     }
@@ -225,9 +249,6 @@ struct ContentView: View {
         statusMessage = "Loading BO2 runtime files…"
 
         Task {
-            // Keep the picker/bookmark URL's security scope alive for the full
-            // asynchronous scan and copy. startAccessing... returning false is
-            // not itself a failure: sandbox/local URLs may not require a scope.
             let accessed = folderURL.startAccessingSecurityScopedResource()
             defer {
                 if accessed {
@@ -255,7 +276,7 @@ struct ContentView: View {
                 await MainActor.run {
                     scanning = false
                     errorMessage = "BO2 load failed: \(error.localizedDescription)"
-                    statusMessage = "Folder access failed. Choose PS3_GAME, USRDIR, english, or a parent folder that contains the BO2 dump."
+                    statusMessage = "Folder access failed. Choose PS3_GAME, USRDIR, english, or use Choose BO2 File Instead."
                 }
             }
         }
