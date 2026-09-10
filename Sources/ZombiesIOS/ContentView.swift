@@ -12,6 +12,8 @@ struct ContentView: View {
     @State private var showingFolderPicker = false
     @State private var showingFilePicker = false
     @State private var rememberedFolderName: String?
+    @State private var activeScopedURL: URL?
+    @State private var activeScopedAccess = false
     @State private var statusMessage = "Choose your BO2 game folder once. ZombiesIOS will remember it and read it in place without copying it into app storage."
     @State private var showingImportDialog = false
     @State private var importDialogTitle = ""
@@ -56,13 +58,20 @@ struct ContentView: View {
                         if let area = runtimeIndex.firstPlayableArea, let file = runtimeIndex.firstPlayableFastFile {
                             LabeledContent("First playable target", value: area.displayName)
                             LabeledContent("Target payload", value: ByteCountFormatter.string(fromByteCount: file.size, countStyle: .file))
-                            NavigationLink("Open Touch Gameplay Test") {
-                                TranzitTouchGameplayView(area: area)
-                            }
                         }
-                        if let runtimeSession {
+                        if let runtimeSession, let loadedArea = runtimeSession.areas.first {
                             LabeledContent("Loaded areas", value: "\(runtimeSession.areas.count)")
-                            LabeledContent("Loaded bytes", value: ByteCountFormatter.string(fromByteCount: runtimeSession.totalLoadedBytes, countStyle: .file))
+                            LabeledContent("Validated bytes", value: ByteCountFormatter.string(fromByteCount: runtimeSession.totalLoadedBytes, countStyle: .file))
+                            LabeledContent("Folder stream", value: activeScopedAccess ? "Active" : "Unavailable")
+                            NavigationLink("Open Touch Runtime") {
+                                TranzitTouchGameplayView(
+                                    loadedArea: loadedArea,
+                                    rootURL: runtimeSession.rootURL,
+                                    sharedContainerCount: runtimeSession.sharedContainers.count,
+                                    audioBankCount: runtimeSession.audioBanks.count
+                                )
+                            }
+                            .disabled(!activeScopedAccess)
                         }
                     }
                 }
@@ -175,19 +184,30 @@ struct ContentView: View {
             beginFolderImport(url)
             return true
         } catch {
-            clearRememberedFolder(message: "The saved folder could not be reopened. Choose the BO2 folder again once.")
+            clearRememberedFolder(message: "The saved folder could not be reopened. Choose it again once.")
             showImportDialog(kind: .failure, title: "Saved Folder Unavailable", message: "The saved BO2 folder could not be reopened. Choose it again once.")
             return false
         }
     }
 
     private func clearRememberedFolder(message: String) {
+        releaseActiveFolderAccess()
         UserDefaults.standard.removeObject(forKey: bookmarkKey)
         rememberedFolderName = nil
         statusMessage = message
     }
 
+    private func releaseActiveFolderAccess() {
+        if activeScopedAccess, let activeScopedURL {
+            activeScopedURL.stopAccessingSecurityScopedResource()
+        }
+        activeScopedURL = nil
+        activeScopedAccess = false
+    }
+
     private func beginFolderImport(_ folderURL: URL) {
+        releaseActiveFolderAccess()
+
         scanning = true
         errorMessage = nil
         report = nil
@@ -196,9 +216,11 @@ struct ContentView: View {
         statusMessage = "Reading BO2 runtime files directly from the selected folder…"
         showImportDialog(kind: .loading, title: "Loading BO2 Files", message: "Reading \(folderURL.lastPathComponent) in place. The game folder will not be copied into ZombiesIOS app storage.")
 
+        let accessed = folderURL.startAccessingSecurityScopedResource()
+        activeScopedURL = accessed ? folderURL : nil
+        activeScopedAccess = accessed
+
         Task {
-            let accessed = folderURL.startAccessingSecurityScopedResource()
-            defer { if accessed { folderURL.stopAccessingSecurityScopedResource() } }
             do {
                 guard FileManager.default.fileExists(atPath: folderURL.path) else { throw DirectFolderImporter.ImportError.cannotAccessFolder }
                 let result = try await directFolderImporter.importFolder(folderURL)
@@ -211,11 +233,12 @@ struct ContentView: View {
                     runtimeSession = session
                     scanning = false
                     let target = index.firstPlayableArea?.displayName ?? "none"
-                    statusMessage = "Tranzit runtime loaded directly from the remembered folder. First playable target: \(target)."
-                    showImportDialog(kind: .success, title: "BO2 Load Complete", message: "Found \(result.report.totalFiles) BO2 files and loaded \(session.areas.count) Tranzit area group(s) directly from the selected folder. No game files were copied into app storage. First playable target: \(target).")
+                    statusMessage = "Tranzit runtime is attached to the remembered folder. First playable target: \(target)."
+                    showImportDialog(kind: .success, title: "BO2 Load Complete", message: "Found \(result.report.totalFiles) BO2 files and attached the smallest Tranzit area directly to the selected folder. Folder access remains active for runtime streaming. No game files were copied into app storage. First playable target: \(target).")
                 }
             } catch {
                 await MainActor.run {
+                    releaseActiveFolderAccess()
                     scanning = false
                     errorMessage = "BO2 load failed: \(error.localizedDescription)"
                     statusMessage = "Folder access failed. Choose PS3_GAME, USRDIR, english, or use Choose BO2 File Instead."
