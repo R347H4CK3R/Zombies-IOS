@@ -133,6 +133,11 @@ actor PS3DumpScanner {
         var pending = [UInt8]()
         var pendingOffset: Int64 = 0
         var discardingOversizedToken = false
+        // Preserve enough trailing bytes to recover UTF-16LE identifiers that span
+        // the 1 MiB streaming-read boundary. The previous per-chunk wide-string pass
+        // could silently lose a reference split between two reads.
+        var utf16Carry = [UInt8]()
+        let utf16CarryLimit = maxReferenceLength * 2 + 4
 
         func flushPending() {
             guard pending.count >= 4 else {
@@ -204,12 +209,15 @@ actor PS3DumpScanner {
             // BO2 metadata occasionally stores identifiers as UTF-16LE. The byte-wise
             // ASCII pass above cannot see those because every character is separated by
             // a zero byte, so carve wide-string candidates from both possible alignments.
+            let wideBytes = utf16Carry + bytes
+            let wideBaseOffset = totalRead - Int64(utf16Carry.count)
             carveUTF16LEReferences(
-                bytes: bytes,
-                baseOffset: totalRead,
+                bytes: wideBytes,
+                baseOffset: wideBaseOffset,
                 refs: &refs,
                 seen: &seen
             )
+            utf16Carry = Array(wideBytes.suffix(min(wideBytes.count, utf16CarryLimit)))
 
             totalRead += Int64(chunk.count)
         }
@@ -321,8 +329,9 @@ actor PS3DumpScanner {
         let extensions = [
             ".iwi", ".dds", ".png", ".jpg", ".tga",
             ".wav", ".mp3", ".xma", ".wem", ".sabs", ".sabl",
-            ".gsc", ".csc", ".cfg", ".csv", ".str",
-            ".xmodel_bin", ".xanim_bin", ".ff", ".ipak"
+            ".gsc", ".csc", ".cfg", ".csv", ".str", ".menu", ".vision",
+            ".xmodel", ".xmodel_bin", ".xanim", ".xanim_bin",
+            ".material", ".ff", ".ipak"
         ]
 
         if let ext = extensions.first(where: value.hasSuffix) {
@@ -336,7 +345,8 @@ actor PS3DumpScanner {
                 let knownPrefixes = [
                     "zm_", "zmb_", "weapon_", "wpn_", "xmodel_", "xanim_",
                     "material_", "snd_", "sound_", "transit_", "ui_", "code_",
-                    "common_", "patch_", "so_"
+                    "common_", "patch_", "so_", "perk_", "vehicle_", "veh_",
+                    "fx_", "char_", "player_", "hud_", "menu_"
                 ]
                 guard knownPrefixes.contains(where: value.hasPrefix) else { return false }
             }
@@ -346,7 +356,8 @@ actor PS3DumpScanner {
         if value.contains("/") {
             let keywords = [
                 "weapon", "xmodel", "xanim", "material", "image", "sound",
-                "zombie", "zm_", "transit", "script", "maps/"
+                "zombie", "zm_", "transit", "script", "maps/", "perk",
+                "vehicle", "xmodel", "xanim", "material", "fx/"
             ]
             return keywords.contains(where: value.contains)
         }
@@ -359,7 +370,8 @@ actor PS3DumpScanner {
         let keywords = [
             "weapon_", "wpn_", "xmodel_", "xanim_", "material_", "image_",
             "zombie_", "zmb_", "zm_", "transit_", "snd_", "sound_",
-            "script_", "maps_", "ui_", "code_", "common_", "patch_", "so_"
+            "script_", "maps_", "ui_", "code_", "common_", "patch_", "so_",
+            "perk_", "vehicle_", "veh_", "fx_", "char_", "player_", "hud_", "menu_"
         ]
         guard keywords.contains(where: value.hasPrefix) else { return false }
 
@@ -376,6 +388,9 @@ actor PS3DumpScanner {
         if value.contains("xmodel") || value.hasSuffix(".xmodel_bin") { return "model" }
         if value.contains("xanim") || value.hasSuffix(".xanim_bin") { return "animation" }
         if value.contains("material") { return "material" }
+        if value.hasPrefix("fx_") || value.contains("/fx/") { return "effect" }
+        if value.hasPrefix("vehicle_") || value.hasPrefix("veh_") || value.contains("/vehicle") { return "vehicle" }
+        if value.hasPrefix("ui_") || value.hasPrefix("hud_") || value.hasPrefix("menu_") { return "ui" }
         if [".iwi", ".dds", ".png", ".jpg", ".tga"].contains(where: value.hasSuffix) { return "texture" }
         if [".wav", ".mp3", ".xma", ".wem", ".sabs", ".sabl"].contains(where: value.hasSuffix) || value.contains("sound") || value.hasPrefix("snd_") { return "audio" }
         if [".gsc", ".csc", ".cfg"].contains(where: value.hasSuffix) || value.contains("script") { return "script" }
