@@ -2,8 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct ContentView: View {
-    @State private var showingFolderPicker = false
-    @State private var showingFileImporter = false
+    @State private var showingFolderImporter = false
     @State private var scanning = false
     @State private var report: ScanReport?
     @State private var exportedReportURL: URL?
@@ -16,16 +15,11 @@ struct ContentView: View {
             List {
                 Section("Choose BO2 Data") {
                     Button("Select PS3_GAME / USRDIR Folder") {
-                        showingFolderPicker = true
+                        showingFolderImporter = true
                     }
                     .disabled(scanning)
 
-                    Button("Select a File (diagnostic fallback)") {
-                        showingFileImporter = true
-                    }
-                    .disabled(scanning)
-
-                    Text("The folder button now uses Apple's native UIDocumentPicker directly instead of SwiftUI's folder importer.")
+                    Text("In Files, open PS3_GAME so you can see PARAM.SFO and USRDIR, then tap Open.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -71,26 +65,18 @@ struct ContentView: View {
                 }
             }
             .navigationTitle("Zombies Importer")
-            .sheet(isPresented: $showingFolderPicker) {
-                FolderPicker(
-                    onPick: { url in
-                        showingFolderPicker = false
-                        beginScan(url)
-                    },
-                    onCancel: {
-                        showingFolderPicker = false
-                    }
-                )
-            }
             .fileImporter(
-                isPresented: $showingFileImporter,
-                allowedContentTypes: [.data, .item],
+                isPresented: $showingFolderImporter,
+                allowedContentTypes: [.folder],
                 allowsMultipleSelection: false
             ) { result in
                 switch result {
                 case .success(let urls):
-                    guard let url = urls.first else { return }
-                    errorMessage = "Selected file: \(url.lastPathComponent). Folder access is required for a full recursive scan."
+                    guard let url = urls.first else {
+                        errorMessage = "No folder was returned by the Files picker."
+                        return
+                    }
+                    beginScan(url)
                 case .failure(let error):
                     errorMessage = error.localizedDescription
                 }
@@ -102,6 +88,7 @@ struct ContentView: View {
         scanning = true
         errorMessage = nil
         exportedReportURL = nil
+        report = nil
 
         Task {
             do {
@@ -114,7 +101,7 @@ struct ContentView: View {
                 }
             } catch {
                 await MainActor.run {
-                    errorMessage = String(describing: error)
+                    errorMessage = "Scan failed: \(error.localizedDescription)"
                     scanning = false
                 }
             }
