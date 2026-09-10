@@ -1,1 +1,2 @@
-Build trigger file. Update this file only when an IPA build is intentionally requested.
+Build requested after scanner compile fix.
+Trigger sequence: 1
