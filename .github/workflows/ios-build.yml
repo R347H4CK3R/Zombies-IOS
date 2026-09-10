@@ -15,6 +15,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate BO2 asset boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if find . -type f \( -name '*.ff' -o -name '*.ipak' -o -name '*.sabs' -o -name '*.sabl' -o -name 'EBOOT.BIN' \) -print -quit | grep -q .; then
+            echo "::error::Raw BO2/PS3 payload files must stay local and must not be bundled into the repository IPA."
+            find . -type f \( -name '*.ff' -o -name '*.ipak' -o -name '*.sabs' -o -name '*.sabl' -o -name 'EBOOT.BIN' \) -print
+            exit 1
+          fi
+
+          grep -q 'newReport.isBuildReady' Sources/ZombiesIOS/ContentView.swift || {
+            echo "::error::Importer no longer gates payload extraction on ScanReport.isBuildReady."
+            exit 1
+          }
+
+          grep -q 'guard report.isBuildReady' Sources/ZombiesIOS/ContentView.swift || {
+            echo "::error::Local BO2 payload extraction is missing its build-readiness guard."
+            exit 1
+          }
+
+          grep -q 'zeroByteFiles.isEmpty' Sources/ZombiesIOS/Models/ScanReport.swift || {
+            echo "::error::ScanReport no longer rejects zero-byte manifest files."
+            exit 1
+          }
+
       - name: Install XcodeGen
         run: brew install xcodegen
 
