@@ -2,6 +2,12 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct ContentView: View {
+    private enum ImportDialogKind {
+        case loading
+        case success
+        case failure
+    }
+
     @State private var scanning = false
     @State private var report: ScanReport?
     @State private var runtimeIndex: TranzitRuntimeIndex?
@@ -11,6 +17,10 @@ struct ContentView: View {
     @State private var showingFilePicker = false
     @State private var rememberedFolderName: String?
     @State private var statusMessage = "Choose your BO2 game folder once. ZombiesIOS will remember it for future launches."
+    @State private var showingImportDialog = false
+    @State private var importDialogTitle = ""
+    @State private var importDialogMessage = ""
+    @State private var importDialogKind: ImportDialogKind = .loading
 
     private let directFolderImporter = DirectFolderImporter()
     private let runtimeLoader = TranzitRuntimeLoader()
@@ -107,6 +117,7 @@ struct ContentView: View {
                     },
                     onCancel: {
                         showingFolderPicker = false
+                        showImportDialog(kind: .failure, title: "Folder Selection Cancelled", message: "No BO2 folder was selected.")
                     }
                 )
             }
@@ -117,18 +128,34 @@ struct ContentView: View {
             ) { result in
                 switch result {
                 case .success(let urls):
-                    guard let fileURL = urls.first else { return }
+                    guard let fileURL = urls.first else {
+                        showImportDialog(kind: .failure, title: "No File Selected", message: "Choose a BO2 file such as EBOOT.BIN or common_zm.ff.")
+                        return
+                    }
                     let folderURL = fileURL.deletingLastPathComponent()
                     remember(folder: folderURL)
                     beginFolderImport(folderURL)
                 case .failure(let error):
                     errorMessage = "BO2 file selection failed: \(error.localizedDescription)"
+                    showImportDialog(kind: .failure, title: "File Selection Failed", message: error.localizedDescription)
                 }
+            }
+            .alert(importDialogTitle, isPresented: $showingImportDialog) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(importDialogMessage)
             }
             .task {
                 restoreRememberedFolderName()
             }
         }
+    }
+
+    private func showImportDialog(kind: ImportDialogKind, title: String, message: String) {
+        importDialogKind = kind
+        importDialogTitle = title
+        importDialogMessage = message
+        showingImportDialog = true
     }
 
     private func remember(folder url: URL) {
@@ -230,6 +257,7 @@ struct ContentView: View {
             clearRememberedFolder(
                 message: "The saved folder could not be reopened. Choose the BO2 folder again once."
             )
+            showImportDialog(kind: .failure, title: "Saved Folder Unavailable", message: "The saved BO2 folder could not be reopened. Choose it again once.")
             return false
         }
     }
@@ -247,6 +275,7 @@ struct ContentView: View {
         runtimeIndex = nil
         runtimeSession = nil
         statusMessage = "Loading BO2 runtime files…"
+        showImportDialog(kind: .loading, title: "Loading BO2 Files", message: "Reading \(folderURL.lastPathComponent) and importing the available Zombies runtime files.")
 
         Task {
             let accessed = folderURL.startAccessingSecurityScopedResource()
@@ -271,12 +300,22 @@ struct ContentView: View {
                     runtimeSession = session
                     scanning = false
                     statusMessage = "Game folder remembered. Tranzit runtime loaded \(session.areas.count) area groups."
+                    showImportDialog(
+                        kind: .success,
+                        title: "BO2 Load Complete",
+                        message: "Found \(result.report.totalFiles) BO2 files. Loaded \(session.areas.count) Tranzit area group(s), \(session.sharedContainers.count) shared container(s), and \(session.audioBanks.count) audio bank(s)."
+                    )
                 }
             } catch {
                 await MainActor.run {
                     scanning = false
                     errorMessage = "BO2 load failed: \(error.localizedDescription)"
                     statusMessage = "Folder access failed. Choose PS3_GAME, USRDIR, english, or use Choose BO2 File Instead."
+                    showImportDialog(
+                        kind: .failure,
+                        title: "BO2 Load Failed",
+                        message: "\(error.localizedDescription)\n\nTry selecting PS3_GAME, USRDIR, english, or choose a BO2 file instead."
+                    )
                 }
             }
         }
