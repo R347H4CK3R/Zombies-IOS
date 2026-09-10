@@ -90,7 +90,7 @@ struct ContentView: View {
                 FolderPicker(
                     onPick: { url in
                         showingFolderPicker = false
-                        guard remember(folder: url) else { return }
+                        remember(folder: url)
                         beginFolderImport(url)
                     },
                     onCancel: {
@@ -104,15 +104,13 @@ struct ContentView: View {
         }
     }
 
-    @discardableResult
-    private func remember(folder url: URL) -> Bool {
+    private func remember(folder url: URL) {
         let accessed = url.startAccessingSecurityScopedResource()
-        guard accessed else {
-            errorMessage = "iOS did not grant access to that folder. Choose the BO2 folder again and tap Open/Done in the Files picker."
-            statusMessage = "Folder permission was not granted."
-            return false
+        defer {
+            if accessed {
+                url.stopAccessingSecurityScopedResource()
+            }
         }
-        defer { url.stopAccessingSecurityScopedResource() }
 
         do {
             let data = try url.bookmarkData(
@@ -123,11 +121,11 @@ struct ContentView: View {
             UserDefaults.standard.set(data, forKey: bookmarkKey)
             rememberedFolderName = url.lastPathComponent
             errorMessage = nil
-            return true
         } catch {
-            errorMessage = "Could not remember the game folder: \(error.localizedDescription)"
-            statusMessage = "Folder access worked, but the saved permission could not be created."
-            return false
+            // A bookmark failure must not block the current import. The user can
+            // still use the selected directory for this launch and choose it
+            // again later if the provider does not support persistent bookmarks.
+            errorMessage = "The folder can be used now, but iOS could not save it for the next launch: \(error.localizedDescription)"
         }
     }
 
@@ -146,30 +144,22 @@ struct ContentView: View {
                 bookmarkDataIsStale: &stale
             )
 
-            let accessed = url.startAccessingSecurityScopedResource()
-            guard accessed else {
-                clearRememberedFolder(
-                    message: "The saved folder permission is no longer valid. Choose the BO2 folder again once."
-                )
-                return
-            }
-            defer { url.stopAccessingSecurityScopedResource() }
-
             rememberedFolderName = url.lastPathComponent
 
             if stale {
-                do {
-                    let refreshed = try url.bookmarkData(
-                        options: .minimalBookmark,
-                        includingResourceValuesForKeys: nil,
-                        relativeTo: nil
-                    )
-                    UserDefaults.standard.set(refreshed, forKey: bookmarkKey)
-                } catch {
-                    clearRememberedFolder(
-                        message: "The saved folder reference became stale. Choose the BO2 folder again once."
-                    )
+                let accessed = url.startAccessingSecurityScopedResource()
+                defer {
+                    if accessed {
+                        url.stopAccessingSecurityScopedResource()
+                    }
                 }
+
+                let refreshed = try url.bookmarkData(
+                    options: .minimalBookmark,
+                    includingResourceValuesForKeys: nil,
+                    relativeTo: nil
+                )
+                UserDefaults.standard.set(refreshed, forKey: bookmarkKey)
             }
         } catch {
             clearRememberedFolder(
@@ -193,33 +183,23 @@ struct ContentView: View {
                 bookmarkDataIsStale: &stale
             )
 
-            let accessed = url.startAccessingSecurityScopedResource()
-            guard accessed else {
-                clearRememberedFolder(
-                    message: "The saved folder permission expired or was revoked. Choose the BO2 folder again once."
-                )
-                return false
-            }
-
             if stale {
-                do {
-                    let refreshed = try url.bookmarkData(
-                        options: .minimalBookmark,
-                        includingResourceValuesForKeys: nil,
-                        relativeTo: nil
-                    )
-                    UserDefaults.standard.set(refreshed, forKey: bookmarkKey)
-                } catch {
-                    url.stopAccessingSecurityScopedResource()
-                    clearRememberedFolder(
-                        message: "The saved folder reference became stale. Choose the BO2 folder again once."
-                    )
-                    return false
+                let accessed = url.startAccessingSecurityScopedResource()
+                defer {
+                    if accessed {
+                        url.stopAccessingSecurityScopedResource()
+                    }
                 }
+
+                let refreshed = try url.bookmarkData(
+                    options: .minimalBookmark,
+                    includingResourceValuesForKeys: nil,
+                    relativeTo: nil
+                )
+                UserDefaults.standard.set(refreshed, forKey: bookmarkKey)
             }
 
             rememberedFolderName = url.lastPathComponent
-            url.stopAccessingSecurityScopedResource()
             beginFolderImport(url)
             return true
         } catch {
@@ -245,7 +225,21 @@ struct ContentView: View {
         statusMessage = "Loading BO2 runtime files…"
 
         Task {
+            // Keep the picker/bookmark URL's security scope alive for the full
+            // asynchronous scan and copy. startAccessing... returning false is
+            // not itself a failure: sandbox/local URLs may not require a scope.
+            let accessed = folderURL.startAccessingSecurityScopedResource()
+            defer {
+                if accessed {
+                    folderURL.stopAccessingSecurityScopedResource()
+                }
+            }
+
             do {
+                guard FileManager.default.fileExists(atPath: folderURL.path) else {
+                    throw DirectFolderImporter.ImportError.cannotAccessFolder
+                }
+
                 let result = try await directFolderImporter.importFolder(folderURL)
                 let index = TranzitRuntimeIndex(report: result.report)
                 let session = try await runtimeLoader.loadCurrent(report: result.report)
@@ -261,7 +255,7 @@ struct ContentView: View {
                 await MainActor.run {
                     scanning = false
                     errorMessage = "BO2 load failed: \(error.localizedDescription)"
-                    statusMessage = "The remembered folder is still saved; fix the source files or choose a different folder."
+                    statusMessage = "Folder access failed. Choose PS3_GAME, USRDIR, english, or a parent folder that contains the BO2 dump."
                 }
             }
         }
