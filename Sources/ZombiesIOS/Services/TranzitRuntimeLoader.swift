@@ -47,6 +47,12 @@ actor TranzitRuntimeLoader {
         }
     }
 
+    private struct Candidate {
+        let area: TranzitArea
+        let resource: TranzitLoadedResource
+        let report: T6FastFileContainerReport
+    }
+
     func loadCurrent(report: ScanReport, rootURL: URL) throws -> TranzitRuntimeSession {
         let fm = FileManager.default
         guard fm.fileExists(atPath: rootURL.path) else {
@@ -54,14 +60,60 @@ actor TranzitRuntimeLoader {
         }
 
         let index = TranzitRuntimeIndex(report: report)
-        guard let firstArea = index.firstPlayableArea,
-              let firstFile = index.firstPlayableFastFile else {
-            throw LoaderError.noAreas
+
+        // Fingerprint every real Tranzit area candidate instead of assuming that
+        // the smallest filename match is automatically the correct T6 container.
+        // Prefer a recognized PS3 FastFile. If an unencrypted server FastFile is
+        // present it wins because its XChunks can be consumed immediately; retail
+        // signed/encrypted PS3 FastFiles remain valid candidates and are identified
+        // explicitly rather than being mislabeled as unsupported.
+        var candidates: [Candidate] = []
+        for area in TranzitArea.allCases {
+            guard let file = report.files.first(where: {
+                $0.name.lowercased() == area.fastFileStem + ".ff" && $0.size > 4_096
+            }) else { continue }
+
+            guard let resource = try? load(file: file, under: rootURL),
+                  let fingerprint = try? T6FastFileInspector.inspect(
+                    rootURL: rootURL,
+                    resource: resource,
+                    maxChunks: 2
+                  ),
+                  fingerprint.isT6PS3 else {
+                continue
+            }
+            candidates.append(Candidate(area: area, resource: resource, report: fingerprint))
         }
 
-        let firstResource = try load(file: firstFile, under: rootURL)
-        let loadedAreas = [TranzitLoadedArea(area: firstArea, fastFile: firstResource)]
-        let containerReport = try? T6FastFileInspector.inspect(rootURL: rootURL, resource: firstResource)
+        candidates.sort { lhs, rhs in
+            if lhs.report.supportsRawXChunks != rhs.report.supportsRawXChunks {
+                return lhs.report.supportsRawXChunks && !rhs.report.supportsRawXChunks
+            }
+            return lhs.resource.byteCount < rhs.resource.byteCount
+        }
+
+        let selectedArea: TranzitArea
+        let selectedResource: TranzitLoadedResource
+        let containerReport: T6FastFileContainerReport?
+
+        if let selected = candidates.first {
+            selectedArea = selected.area
+            selectedResource = selected.resource
+            containerReport = selected.report
+        } else {
+            guard let fallbackArea = index.firstPlayableArea,
+                  let fallbackFile = index.firstPlayableFastFile else {
+                throw LoaderError.noAreas
+            }
+            selectedArea = fallbackArea
+            selectedResource = try load(file: fallbackFile, under: rootURL)
+            containerReport = try? T6FastFileInspector.inspect(
+                rootURL: rootURL,
+                resource: selectedResource
+            )
+        }
+
+        let loadedAreas = [TranzitLoadedArea(area: selectedArea, fastFile: selectedResource)]
 
         let allAreaNames = Set(
             TranzitArea.allCases.map { ($0.fastFileStem + ".ff").lowercased() }
