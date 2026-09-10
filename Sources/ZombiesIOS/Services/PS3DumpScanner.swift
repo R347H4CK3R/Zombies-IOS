@@ -7,6 +7,7 @@ actor PS3DumpScanner {
         case unableToEnumerate
         case cannotOpenArchive
         case emptyArchive
+        case noManifestMatches
 
         var errorDescription: String? {
             switch self {
@@ -14,9 +15,12 @@ actor PS3DumpScanner {
             case .unableToEnumerate: return "The selected folder could not be enumerated."
             case .cannotOpenArchive: return "The ZIP archive could not be opened."
             case .emptyArchive: return "The ZIP archive contains no files."
+            case .noManifestMatches: return "No BO2 Zombies files from the built-in manifest were found."
             }
         }
     }
+
+    private let impossibleSizeThreshold: Int64 = 1 << 40 // 1 TiB
 
     func scan(folderURL: URL) throws -> ScanReport {
         let accessed = folderURL.startAccessingSecurityScopedResource()
@@ -42,22 +46,26 @@ actor PS3DumpScanner {
             let values = try? fileURL.resourceValues(forKeys: Set(keys))
             guard values?.isRegularFile == true else { continue }
 
-            let size = Int64(values?.fileSize ?? 0)
-            totalBytes += size
-
             let relative = fileURL.path.replacingOccurrences(
                 of: folderURL.path.hasSuffix("/") ? folderURL.path : folderURL.path + "/",
                 with: ""
             )
+
+            guard BO2ZombiesManifest.contains(relative) else { continue }
+
+            let rawSize = Int64(values?.fileSize ?? 0)
+            let size = sanitizedSize(rawSize)
+            totalBytes += size
             results.append(makeScannedFile(path: relative, size: size))
         }
 
+        guard !results.isEmpty else { throw ScannerError.noManifestMatches }
         return makeReport(name: folderURL.lastPathComponent, results: results, totalBytes: totalBytes)
     }
 
     /// Scans ZIP metadata directly from the central directory.
-    /// This intentionally does not decompress the archive, so a bad/unsupported
-    /// compressed entry cannot prevent the importer from producing its report.
+    /// Only BO2 Zombies files listed in BO2ZombiesManifest are retained.
+    /// This intentionally does not decompress the archive.
     func scan(zipURL: URL) throws -> ScanReport {
         guard FileManager.default.fileExists(atPath: zipURL.path) else {
             throw ScannerError.cannotOpenArchive
@@ -70,20 +78,35 @@ actor PS3DumpScanner {
             throw ScannerError.cannotOpenArchive
         }
 
+        var sawAnyFile = false
         var results: [ScannedFile] = []
         var totalBytes: Int64 = 0
 
         for entry in archive {
             guard entry.type == .file else { continue }
-            let size = Int64(entry.uncompressedSize)
+            sawAnyFile = true
+
+            guard BO2ZombiesManifest.contains(entry.path) else { continue }
+
+            let rawSize = Int64(entry.uncompressedSize)
+            let size = sanitizedSize(rawSize)
             totalBytes += size
             results.append(makeScannedFile(path: entry.path, size: size))
         }
 
-        guard !results.isEmpty else { throw ScannerError.emptyArchive }
-        return makeReport(name: zipURL.deletingPathExtension().lastPathComponent,
-                          results: results,
-                          totalBytes: totalBytes)
+        guard sawAnyFile else { throw ScannerError.emptyArchive }
+        guard !results.isEmpty else { throw ScannerError.noManifestMatches }
+
+        return makeReport(
+            name: zipURL.deletingPathExtension().lastPathComponent,
+            results: results,
+            totalBytes: totalBytes
+        )
+    }
+
+    private func sanitizedSize(_ size: Int64) -> Int64 {
+        guard size >= 0, size < impossibleSizeThreshold else { return 0 }
+        return size
     }
 
     private func makeReport(name: String, results: [ScannedFile], totalBytes: Int64) -> ScanReport {
@@ -110,7 +133,7 @@ actor PS3DumpScanner {
             fileExtension: ext,
             size: size,
             category: classify(path: normalized),
-            isLikelyZombiesContent: isLikelyZombies(path: normalized)
+            isLikelyZombiesContent: true
         )
     }
 
@@ -121,21 +144,11 @@ actor PS3DumpScanner {
         if ext == "ff" { return .fastFile }
         if ["gsc", "csc", "cfg"].contains(ext) { return .script }
         if name == "eboot.bin" || ["self", "sprx"].contains(ext) { return .executable }
-        if ["wav", "mp3", "at3", "at9", "wem", "xma"].contains(ext) { return .audio }
+        if ["wav", "mp3", "at3", "at9", "wem", "xma", "sabs", "sabl"].contains(ext) { return .audio }
         if ["dds", "png", "jpg", "jpeg", "tga", "iwi"].contains(ext) { return .texture }
         if ["obj", "fbx", "dae", "xmodel_bin"].contains(ext) { return .model }
-        if ["pak", "psarc", "zip"].contains(ext) { return .archive }
+        if ["pak", "psarc", "zip", "ipak"].contains(ext) { return .archive }
         if ["str", "csv", "json", "txt"].contains(ext) { return .localization }
         return .unknown
-    }
-
-    private func isLikelyZombies(path: String) -> Bool {
-        let p = "/" + path.lowercased().replacingOccurrences(of: "\\", with: "/")
-        let tokens = [
-            "/zm_", "zombie", "zombies", "tomb", "buried",
-            "nuketown", "transit", "tranzit", "die_rise", "mob_of_the_dead",
-            "origins", "greenrun", "town", "farm", "bus_depot"
-        ]
-        return tokens.contains { p.contains($0) }
     }
 }
