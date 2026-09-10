@@ -10,6 +10,11 @@ struct TranzitTouchGameplayView: View {
     @State private var look = CGSize.zero
     @State private var firing = false
     @State private var aiming = false
+    @State private var jumpPulse = 0
+    @State private var reloadPulse = 0
+    @State private var health = 100
+    @State private var ammo = 30
+    @State private var kills = 0
     @State private var runtimeStatus = "Opening BO2 stream…"
     @State private var streamedBytes: UInt64 = 0
     @State private var streamOffset: UInt64 = 0
@@ -36,56 +41,53 @@ struct TranzitTouchGameplayView: View {
                     look: look,
                     firing: firing,
                     aiming: aiming,
+                    jumpPulse: jumpPulse,
+                    reloadPulse: reloadPulse,
+                    health: $health,
+                    ammo: $ammo,
+                    kills: $kills,
                     mapSeed: sceneSeed
                 )
                 .ignoresSafeArea()
 
                 VStack(spacing: 6) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 3) {
                             Text(area.displayName.uppercased())
                                 .font(.headline.monospaced()).foregroundStyle(.white)
-                            Text(loadedArea.fastFile.fileName)
-                                .font(.caption2.monospaced()).foregroundStyle(.white.opacity(0.72))
+                            Text("HP \(health)")
+                                .font(.title3.bold().monospaced())
+                                .foregroundStyle(health > 35 ? .white : .red)
+                            Text("KILLS \(kills)")
+                                .font(.caption.bold().monospaced())
+                                .foregroundStyle(.white.opacity(0.9))
                         }
                         Spacer()
-                        VStack(alignment: .trailing, spacing: 2) {
+                        VStack(alignment: .trailing, spacing: 3) {
+                            Text("\(ammo) / 30")
+                                .font(.title2.bold().monospaced())
+                                .foregroundStyle(ammo > 5 ? .white : .orange)
                             Text(runtimeStatus)
-                                .font(.caption.bold()).foregroundStyle(runtimeError == nil ? .white : .red)
+                                .font(.caption2.bold()).foregroundStyle(runtimeError == nil ? .white.opacity(0.8) : .red)
                             Text(ByteCountFormatter.string(fromByteCount: loadedArea.fastFile.byteCount, countStyle: .file))
-                                .font(.caption2.monospaced()).foregroundStyle(.white.opacity(0.72))
+                                .font(.caption2.monospaced()).foregroundStyle(.white.opacity(0.58))
                         }
                     }
                     .padding(.horizontal)
                     .padding(.top, 6)
-                    .background(.black.opacity(0.36))
-
-                    ProgressView(value: streamProgress)
-                        .padding(.horizontal)
-                        .tint(.white)
-
-                    HStack(spacing: 10) {
-                        Text("READ \(ByteCountFormatter.string(fromByteCount: Int64(streamedBytes), countStyle: .file))")
-                        Text("PREFETCH \(ByteCountFormatter.string(fromByteCount: Int64(prefetchedBytes), countStyle: .file))")
-                        Text("A \(anchorSamples)/3")
-                    }
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.white.opacity(0.65))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(.black.opacity(0.34), in: Capsule())
+                    .background(.black.opacity(0.28))
 
                     if let report = structureReport {
                         HStack(spacing: 9) {
                             Text(report.summary)
-                            Text("U \(report.uniqueByteCount)")
-                            Text(String(format: "NZ %.0f%%", report.nonZeroRatio * 100))
+                            Text("BO2 STREAM \(Int(streamProgress * 100))%")
+                            Text("A \(anchorSamples)/3")
                         }
                         .font(.caption2.monospaced())
-                        .foregroundStyle(.white.opacity(0.62))
+                        .foregroundStyle(.white.opacity(0.55))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
-                        .background(.black.opacity(0.3), in: Capsule())
+                        .background(.black.opacity(0.26), in: Capsule())
                     }
 
                     if let runtimeError {
@@ -95,15 +97,15 @@ struct TranzitTouchGameplayView: View {
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 4)
-                            .background(.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 8))
+                            .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 8))
                             .padding(.horizontal)
                     }
 
                     Spacer()
 
                     Text("+")
-                        .font(.system(size: aiming ? 24 : 34, weight: .light, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.95))
+                        .font(.system(size: aiming ? 22 : 34, weight: .light, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.96))
                         .shadow(radius: 2)
 
                     Spacer()
@@ -111,8 +113,8 @@ struct TranzitTouchGameplayView: View {
                 .allowsHitTesting(false)
 
                 HStack(spacing: 0) {
-                    controlZone(size: geo.size, isMove: true)
-                    controlZone(size: geo.size, isMove: false)
+                    controlZone(isMove: true)
+                    controlZone(isMove: false)
                 }
 
                 VStack {
@@ -123,11 +125,11 @@ struct TranzitTouchGameplayView: View {
                         VStack(spacing: 12) {
                             HStack(spacing: 12) {
                                 actionButton("ADS", active: aiming) { aiming.toggle() }
-                                actionButton("FIRE", active: firing) { firing.toggle() }
+                                fireButton
                             }
                             HStack(spacing: 12) {
-                                actionButton(streaming ? "READ…" : "STREAM", active: streaming) { streamNextChunk() }
-                                actionButton("PREFETCH", active: streaming) { prefetchBurst() }
+                                actionButton("RELOAD", active: false) { reloadPulse &+= 1 }
+                                actionButton("JUMP", active: false) { jumpPulse &+= 1 }
                             }
                         }
                         stick(position: look, label: "LOOK")
@@ -143,6 +145,21 @@ struct TranzitTouchGameplayView: View {
         .task { await validateStream() }
     }
 
+    private var fireButton: some View {
+        Text("FIRE")
+            .font(.caption.bold())
+            .foregroundStyle(.white)
+            .frame(width: 72, height: 52)
+            .background(firing ? .white.opacity(0.38) : .black.opacity(0.35), in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(.white.opacity(0.4)))
+            .contentShape(RoundedRectangle(cornerRadius: 14))
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in firing = true }
+                    .onEnded { _ in firing = false }
+            )
+    }
+
     private func validateStream() async {
         streaming = true
         runtimeError = nil
@@ -155,7 +172,7 @@ struct TranzitTouchGameplayView: View {
             streamedBytes = UInt64(samples.reduce(0) { $0 + $1.data.count })
             runtimeStatus = analysis.looksStructured ? "BO2 DATA READY" : "BO2 DATA READABLE"
             streaming = false
-            streamNextChunk()
+            await prefetchInitialBurst()
         } catch {
             streaming = false
             runtimeStatus = "STREAM OFFLINE"
@@ -163,76 +180,38 @@ struct TranzitTouchGameplayView: View {
         }
     }
 
-    private func streamNextChunk() {
+    private func prefetchInitialBurst() async {
         guard !streaming else { return }
         streaming = true
-        runtimeError = nil
+        let reader = FastFileStreamReader(rootURL: rootURL, resource: loadedArea.fastFile)
+        let fileSize = UInt64(max(0, loadedArea.fastFile.byteCount))
+        var offset = streamOffset < fileSize ? streamOffset : 0
+        var total: UInt64 = 0
+        var lastProgress = streamProgress
 
-        Task {
-            let reader = FastFileStreamReader(rootURL: rootURL, resource: loadedArea.fastFile)
-            do {
-                let fileSize = UInt64(max(0, loadedArea.fastFile.byteCount))
-                let offset = streamOffset < fileSize ? streamOffset : 0
-                let chunk = try await reader.read(offset: offset)
-                await MainActor.run {
-                    streamedBytes += UInt64(chunk.data.count)
-                    streamOffset = chunk.nextOffset >= chunk.fileSize ? 0 : chunk.nextOffset
-                    streamProgress = chunk.progress
-                    runtimeStatus = "PLAYABLE + STREAMING"
-                    runtimeError = nil
-                    streaming = false
-                }
-            } catch {
-                await MainActor.run {
-                    runtimeStatus = "STREAM ERROR"
-                    runtimeError = "Incremental read failed: \(error.localizedDescription)"
-                    streaming = false
-                }
+        do {
+            for _ in 0..<8 {
+                let chunk = try await reader.read(offset: offset, length: 64 * 1024)
+                total += UInt64(chunk.data.count)
+                lastProgress = chunk.progress
+                offset = chunk.nextOffset
+                if offset >= chunk.fileSize { break }
             }
+            streamedBytes += total
+            prefetchedBytes += total
+            streamOffset = offset >= fileSize ? 0 : offset
+            streamProgress = lastProgress
+            runtimeStatus = "PLAYABLE + BO2 STREAM"
+            runtimeError = nil
+            streaming = false
+        } catch {
+            runtimeStatus = "PLAYABLE / STREAM ERROR"
+            runtimeError = "Gameplay is running, but BO2 prefetch failed: \(error.localizedDescription)"
+            streaming = false
         }
     }
 
-    private func prefetchBurst() {
-        guard !streaming else { return }
-        streaming = true
-        runtimeError = nil
-
-        Task {
-            let reader = FastFileStreamReader(rootURL: rootURL, resource: loadedArea.fastFile)
-            let fileSize = UInt64(max(0, loadedArea.fastFile.byteCount))
-            var offset = streamOffset < fileSize ? streamOffset : 0
-            var total: UInt64 = 0
-            var lastProgress = streamProgress
-
-            do {
-                for _ in 0..<8 {
-                    let chunk = try await reader.read(offset: offset, length: 64 * 1024)
-                    total += UInt64(chunk.data.count)
-                    lastProgress = chunk.progress
-                    offset = chunk.nextOffset
-                    if offset >= chunk.fileSize { break }
-                }
-
-                await MainActor.run {
-                    streamedBytes += total
-                    prefetchedBytes += total
-                    streamOffset = offset >= fileSize ? 0 : offset
-                    streamProgress = lastProgress
-                    runtimeStatus = "PREFETCH READY"
-                    runtimeError = nil
-                    streaming = false
-                }
-            } catch {
-                await MainActor.run {
-                    runtimeStatus = "PREFETCH ERROR"
-                    runtimeError = "Bounded prefetch failed: \(error.localizedDescription)"
-                    streaming = false
-                }
-            }
-        }
-    }
-
-    private func controlZone(size: CGSize, isMove: Bool) -> some View {
+    private func controlZone(isMove: Bool) -> some View {
         Color.clear
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0).onChanged { value in
