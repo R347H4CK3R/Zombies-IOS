@@ -61,33 +61,36 @@ actor TranzitRuntimeLoader {
 
         let index = TranzitRuntimeIndex(report: report)
 
-        // Fingerprint every real Tranzit area candidate instead of assuming that
-        // the smallest filename match is automatically the correct T6 container.
-        // Prefer a recognized PS3 FastFile. If an unencrypted server FastFile is
-        // present it wins because its XChunks can be consumed immediately; retail
-        // signed/encrypted PS3 FastFiles remain valid candidates and are identified
-        // explicitly rather than being mislabeled as unsupported.
+        // Inspect every matching area file, not only the first filename match.
+        // BO2 dumps can contain duplicate/stub entries at different paths. Prefer
+        // a recognized T6 PS3 container and then the smallest useful payload so
+        // the first native-runtime milestone keeps memory pressure low.
         var candidates: [Candidate] = []
         for area in TranzitArea.allCases {
-            guard let file = report.files.first(where: {
+            let matchingFiles = report.files.filter {
                 $0.name.lowercased() == area.fastFileStem + ".ff" && $0.size > 4_096
-            }) else { continue }
-
-            guard let resource = try? load(file: file, under: rootURL),
-                  let fingerprint = try? T6FastFileInspector.inspect(
-                    rootURL: rootURL,
-                    resource: resource,
-                    maxChunks: 2
-                  ),
-                  fingerprint.isT6PS3 else {
-                continue
             }
-            candidates.append(Candidate(area: area, resource: resource, report: fingerprint))
+
+            for file in matchingFiles {
+                guard let resource = try? load(file: file, under: rootURL),
+                      let fingerprint = try? T6FastFileInspector.inspect(
+                        rootURL: rootURL,
+                        resource: resource,
+                        maxChunks: 2
+                      ),
+                      fingerprint.isT6PS3 else {
+                    continue
+                }
+                candidates.append(Candidate(area: area, resource: resource, report: fingerprint))
+            }
         }
 
         candidates.sort { lhs, rhs in
             if lhs.report.supportsRawXChunks != rhs.report.supportsRawXChunks {
                 return lhs.report.supportsRawXChunks && !rhs.report.supportsRawXChunks
+            }
+            if lhs.report.isEncrypted != rhs.report.isEncrypted {
+                return !lhs.report.isEncrypted && rhs.report.isEncrypted
             }
             return lhs.resource.byteCount < rhs.resource.byteCount
         }
@@ -147,7 +150,7 @@ actor TranzitRuntimeLoader {
             throw LoaderError.unreadableResource(file.relativePath)
         }
 
-        let header = try handle.read(upToCount: 64) ?? Data()
+        let header = try handle.read(upToCount: 256) ?? Data()
         guard !header.isEmpty else {
             throw LoaderError.unreadableResource(file.relativePath)
         }
