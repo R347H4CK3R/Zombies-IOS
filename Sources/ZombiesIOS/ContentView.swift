@@ -103,6 +103,47 @@ struct ContentView: View {
         }
     }
 
+    private func beginFolderImport(_ folderURL: URL) {
+        scanning = true
+        errorMessage = nil
+        report = nil
+        exportedReportURL = nil
+        statusMessage = "Reading BO2 files directly and forcing provider-backed files to download…"
+
+        Task {
+            do {
+                let result = try await directFolderImporter.importFolder(folderURL)
+                let reportURL = try ReportExporter.makeJSONFile(from: result.report)
+
+                await MainActor.run {
+                    report = result.report
+                    exportedReportURL = reportURL
+                    scanning = false
+
+                    if result.report.isBuildReady, let importedURL = result.importedAssetsURL {
+                        statusMessage = "Direct import verified. All manifest files were physically read and copied to \\(importedURL.lastPathComponent). Build ready."
+                    } else if !result.report.zeroByteFiles.isEmpty {
+                        statusMessage = "Direct import found \\(result.report.zeroByteFiles.count) source file(s) that still returned zero bytes after a real read. Those source files themselves need to be restored/re-copied."
+                    } else {
+                        statusMessage = "Direct import is missing \\(result.report.missingManifestCount) required manifest file(s)."
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    let nsError = error as NSError
+                    errorMessage = """
+                    Direct folder import failed: \\(error.localizedDescription)
+                    Domain: \\(nsError.domain)
+                    Code: \\(nsError.code)
+                    Folder: \\(folderURL.lastPathComponent)
+                    """
+                    scanning = false
+                    statusMessage = "Direct import failed."
+                }
+            }
+        }
+    }
+
     private func beginZipImport(_ zipURL: URL) {
         scanning = true
         errorMessage = nil
