@@ -19,27 +19,46 @@ struct ContentView: View {
         NavigationStack {
             List {
                 Section("BO2 Game Folder") {
-                    Text(statusMessage).font(.callout)
+                    Text(statusMessage)
+                        .font(.callout)
+
                     if let rememberedFolderName {
                         LabeledContent("Remembered", value: rememberedFolderName)
                     }
+
                     Button {
-                        if !openRememberedFolder() { showingFolderPicker = true }
+                        if !openRememberedFolder() {
+                            showingFolderPicker = true
+                        }
                     } label: {
-                        Label(rememberedFolderName == nil ? "Choose BO2 Game Folder" : "Use Remembered Game Folder", systemImage: "folder.fill")
+                        Label(
+                            rememberedFolderName == nil ? "Choose BO2 Game Folder" : "Use Remembered Game Folder",
+                            systemImage: "folder.fill"
+                        )
                     }
                     .disabled(scanning)
 
-                    Button("Change Remembered Folder") { showingFolderPicker = true }
+                    if rememberedFolderName != nil {
+                        Button("Change Remembered Folder") {
+                            showingFolderPicker = true
+                        }
                         .disabled(scanning)
+                    }
                 }
 
-                if scanning { Section { ProgressView("Loading BO2 runtime files…") } }
+                if scanning {
+                    Section {
+                        ProgressView("Loading BO2 runtime files…")
+                    }
+                }
 
                 if let report {
                     Section("Import Inventory") {
                         LabeledContent("Found", value: "\(report.totalFiles)")
-                        LabeledContent("Known size", value: ByteCountFormatter.string(fromByteCount: report.totalBytes, countStyle: .file))
+                        LabeledContent(
+                            "Known size",
+                            value: ByteCountFormatter.string(fromByteCount: report.totalBytes, countStyle: .file)
+                        )
                     }
                 }
 
@@ -48,62 +67,173 @@ struct ContentView: View {
                         LabeledContent("Areas available", value: "\(runtimeIndex.availableAreas.count)")
                         LabeledContent("Containers", value: "\(runtimeIndex.containerFiles.count)")
                         LabeledContent("Audio banks", value: "\(runtimeIndex.audioBanks.count)")
+
                         if let runtimeSession {
                             LabeledContent("Loaded areas", value: "\(runtimeSession.areas.count)")
-                            LabeledContent("Loaded bytes", value: ByteCountFormatter.string(fromByteCount: runtimeSession.totalLoadedBytes, countStyle: .file))
+                            LabeledContent(
+                                "Loaded bytes",
+                                value: ByteCountFormatter.string(fromByteCount: runtimeSession.totalLoadedBytes, countStyle: .file)
+                            )
                         }
                     }
                 }
 
-                if let errorMessage { Section("Error") { Text(errorMessage).foregroundStyle(.red) } }
+                if let errorMessage {
+                    Section("Error") {
+                        Text(errorMessage)
+                            .foregroundStyle(.red)
+                    }
+                }
             }
             .navigationTitle("ZombiesIOS")
             .sheet(isPresented: $showingFolderPicker) {
-                FolderPicker(onPick: { url in
-                    showingFolderPicker = false
-                    remember(folder: url)
-                    beginFolderImport(url)
-                }, onCancel: { showingFolderPicker = false })
+                FolderPicker(
+                    onPick: { url in
+                        showingFolderPicker = false
+                        guard remember(folder: url) else { return }
+                        beginFolderImport(url)
+                    },
+                    onCancel: {
+                        showingFolderPicker = false
+                    }
+                )
             }
-            .task { restoreRememberedFolderName() }
+            .task {
+                restoreRememberedFolderName()
+            }
         }
     }
 
-    private func remember(folder url: URL) {
+    @discardableResult
+    private func remember(folder url: URL) -> Bool {
+        let accessed = url.startAccessingSecurityScopedResource()
+        guard accessed else {
+            errorMessage = "iOS did not grant access to that folder. Choose the BO2 folder again and tap Open/Done in the Files picker."
+            statusMessage = "Folder permission was not granted."
+            return false
+        }
+        defer { url.stopAccessingSecurityScopedResource() }
+
         do {
-            let data = try url.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
+            let data = try url.bookmarkData(
+                options: .minimalBookmark,
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
             UserDefaults.standard.set(data, forKey: bookmarkKey)
             rememberedFolderName = url.lastPathComponent
+            errorMessage = nil
+            return true
         } catch {
             errorMessage = "Could not remember the game folder: \(error.localizedDescription)"
+            statusMessage = "Folder access worked, but the saved permission could not be created."
+            return false
         }
     }
 
     private func restoreRememberedFolderName() {
-        guard let data = UserDefaults.standard.data(forKey: bookmarkKey) else { return }
+        guard let data = UserDefaults.standard.data(forKey: bookmarkKey) else {
+            rememberedFolderName = nil
+            return
+        }
+
         var stale = false
-        if let url = try? URL(resolvingBookmarkData: data, options: [.withoutUI], relativeTo: nil, bookmarkDataIsStale: &stale) {
+        do {
+            let url = try URL(
+                resolvingBookmarkData: data,
+                options: [.withoutUI],
+                relativeTo: nil,
+                bookmarkDataIsStale: &stale
+            )
+
+            let accessed = url.startAccessingSecurityScopedResource()
+            guard accessed else {
+                clearRememberedFolder(
+                    message: "The saved folder permission is no longer valid. Choose the BO2 folder again once."
+                )
+                return
+            }
+            defer { url.stopAccessingSecurityScopedResource() }
+
             rememberedFolderName = url.lastPathComponent
-            if stale { remember(folder: url) }
+
+            if stale {
+                do {
+                    let refreshed = try url.bookmarkData(
+                        options: .minimalBookmark,
+                        includingResourceValuesForKeys: nil,
+                        relativeTo: nil
+                    )
+                    UserDefaults.standard.set(refreshed, forKey: bookmarkKey)
+                } catch {
+                    clearRememberedFolder(
+                        message: "The saved folder reference became stale. Choose the BO2 folder again once."
+                    )
+                }
+            }
+        } catch {
+            clearRememberedFolder(
+                message: "The saved folder could not be reopened. Choose the BO2 folder again once."
+            )
         }
     }
 
     @discardableResult
     private func openRememberedFolder() -> Bool {
-        guard let data = UserDefaults.standard.data(forKey: bookmarkKey) else { return false }
+        guard let data = UserDefaults.standard.data(forKey: bookmarkKey) else {
+            return false
+        }
+
         var stale = false
         do {
-            let url = try URL(resolvingBookmarkData: data, options: [.withoutUI], relativeTo: nil, bookmarkDataIsStale: &stale)
-            if stale { remember(folder: url) }
+            let url = try URL(
+                resolvingBookmarkData: data,
+                options: [.withoutUI],
+                relativeTo: nil,
+                bookmarkDataIsStale: &stale
+            )
+
+            let accessed = url.startAccessingSecurityScopedResource()
+            guard accessed else {
+                clearRememberedFolder(
+                    message: "The saved folder permission expired or was revoked. Choose the BO2 folder again once."
+                )
+                return false
+            }
+
+            if stale {
+                do {
+                    let refreshed = try url.bookmarkData(
+                        options: .minimalBookmark,
+                        includingResourceValuesForKeys: nil,
+                        relativeTo: nil
+                    )
+                    UserDefaults.standard.set(refreshed, forKey: bookmarkKey)
+                } catch {
+                    url.stopAccessingSecurityScopedResource()
+                    clearRememberedFolder(
+                        message: "The saved folder reference became stale. Choose the BO2 folder again once."
+                    )
+                    return false
+                }
+            }
+
             rememberedFolderName = url.lastPathComponent
+            url.stopAccessingSecurityScopedResource()
             beginFolderImport(url)
             return true
         } catch {
-            UserDefaults.standard.removeObject(forKey: bookmarkKey)
-            rememberedFolderName = nil
-            statusMessage = "The saved folder permission expired. Choose the BO2 folder again once."
+            clearRememberedFolder(
+                message: "The saved folder could not be reopened. Choose the BO2 folder again once."
+            )
             return false
         }
+    }
+
+    private func clearRememberedFolder(message: String) {
+        UserDefaults.standard.removeObject(forKey: bookmarkKey)
+        rememberedFolderName = nil
+        statusMessage = message
     }
 
     private func beginFolderImport(_ folderURL: URL) {
@@ -112,13 +242,14 @@ struct ContentView: View {
         report = nil
         runtimeIndex = nil
         runtimeSession = nil
-        statusMessage = "Loading from remembered BO2 game folder…"
+        statusMessage = "Loading BO2 runtime files…"
 
         Task {
             do {
                 let result = try await directFolderImporter.importFolder(folderURL)
                 let index = TranzitRuntimeIndex(report: result.report)
                 let session = try await runtimeLoader.loadCurrent(report: result.report)
+
                 await MainActor.run {
                     report = result.report
                     runtimeIndex = index
