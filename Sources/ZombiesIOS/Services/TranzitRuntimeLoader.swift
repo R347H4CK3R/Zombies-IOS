@@ -21,6 +21,7 @@ struct TranzitRuntimeSession {
     let areas: [TranzitLoadedArea]
     let sharedContainers: [TranzitLoadedResource]
     let audioBanks: [TranzitLoadedResource]
+    let t6ContainerReport: T6FastFileContainerReport?
 
     var totalLoadedBytes: Int64 {
         (areas.map(\.fastFile) + sharedContainers + audioBanks)
@@ -46,9 +47,6 @@ actor TranzitRuntimeLoader {
         }
     }
 
-    /// Opens only the smallest usable Tranzit area on the initial runtime pass.
-    /// Other area FastFiles stay closed so an iPhone does not pay their memory/I/O
-    /// cost before the native gameplay path for one area has been proven.
     func loadCurrent(report: ScanReport, rootURL: URL) throws -> TranzitRuntimeSession {
         let fm = FileManager.default
         guard fm.fileExists(atPath: rootURL.path) else {
@@ -63,10 +61,8 @@ actor TranzitRuntimeLoader {
 
         let firstResource = try load(file: firstFile, under: rootURL)
         let loadedAreas = [TranzitLoadedArea(area: firstArea, fastFile: firstResource)]
+        let containerReport = try? T6FastFileInspector.inspect(rootURL: rootURL, resource: firstResource)
 
-        // Never treat another Tranzit area FastFile as a shared dependency.
-        // Shared containers are FF/IPAK resources that are not one of the known
-        // area payloads. This avoids silently reopening every map on launch.
         let allAreaNames = Set(
             TranzitArea.allCases.map { ($0.fastFileStem + ".ff").lowercased() }
         )
@@ -74,16 +70,14 @@ actor TranzitRuntimeLoader {
             !allAreaNames.contains($0.name.lowercased())
         }
         let shared = try sharedFiles.map { try load(file: $0, under: rootURL) }
-
-        // Audio remains indexed separately so the runtime can resolve BO2 banks
-        // without copying them. These are opened only for validation/header reads.
         let audio = try index.audioBanks.map { try load(file: $0, under: rootURL) }
 
         return TranzitRuntimeSession(
             rootURL: rootURL,
             areas: loadedAreas,
             sharedContainers: shared,
-            audioBanks: audio
+            audioBanks: audio,
+            t6ContainerReport: containerReport
         )
     }
 
@@ -101,8 +95,6 @@ actor TranzitRuntimeLoader {
             throw LoaderError.unreadableResource(file.relativePath)
         }
 
-        // Read only enough bytes to prove the resource is reachable. Keep the BO2
-        // data in place instead of materializing complete FastFiles in app memory.
         let header = try handle.read(upToCount: 64) ?? Data()
         guard !header.isEmpty else {
             throw LoaderError.unreadableResource(file.relativePath)
