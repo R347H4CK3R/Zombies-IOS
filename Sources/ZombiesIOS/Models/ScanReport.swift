@@ -1,5 +1,21 @@
 import Foundation
 
+struct AssetReference: Codable, Hashable {
+    let name: String
+    let kind: String
+    let offset: Int64
+}
+
+struct ContainerInspection: Codable, Hashable {
+    let detectedFormat: String
+    let headerHex: String
+    let headerASCII: String
+    let bytesInspected: Int64
+    let embeddedAssetReferences: [AssetReference]
+
+    var assetReferenceCount: Int { embeddedAssetReferences.count }
+}
+
 struct ScannedFile: Codable, Identifiable, Hashable {
     var id: String { relativePath }
     let relativePath: String
@@ -8,6 +24,7 @@ struct ScannedFile: Codable, Identifiable, Hashable {
     let size: Int64
     let category: FileCategory
     let isLikelyZombiesContent: Bool
+    let inspection: ContainerInspection?
 }
 
 enum FileCategory: String, Codable, CaseIterable {
@@ -39,6 +56,14 @@ struct ScanReport: Codable {
 
     var missingManifestCount: Int {
         max(0, BO2ZombiesManifest.relativePaths.count - totalFiles)
+    }
+
+    var inspectedFileCount: Int {
+        files.filter { $0.inspection != nil }.count
+    }
+
+    var embeddedAssetReferenceCount: Int {
+        files.reduce(0) { $0 + ($1.inspection?.assetReferenceCount ?? 0) }
     }
 
     var isBuildReady: Bool {
