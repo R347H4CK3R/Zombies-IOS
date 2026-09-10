@@ -28,3 +28,4 @@ t6-xfile-structure 2026-09-10T17:48:00-05:00
 ps3-era-scene-fidelity 2026-09-10T17:55:00-05:00
 sdk-stable-collision 2026-09-10T18:02:00-05:00
 ps3-signed-fastfile-fingerprint 2026-09-10T18:15:00-05:00
+ps3-fastfile-recognition-root-depth-fix 2026-09-10T17:54:00-05:00
