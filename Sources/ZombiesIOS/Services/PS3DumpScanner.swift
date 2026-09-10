@@ -37,10 +37,12 @@ actor PS3DumpScanner {
             .totalFileAllocatedSizeKey,
             .nameKey
         ]
+
         guard let enumerator = FileManager.default.enumerator(
             at: folderURL,
             includingPropertiesForKeys: keys,
-            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            options: [.skipsHiddenFiles, .skipsPackageDescendants],
+            errorHandler: { _, _ in true }
         ) else {
             throw ScannerError.unableToEnumerate
         }
@@ -52,14 +54,13 @@ actor PS3DumpScanner {
             let values = try? fileURL.resourceValues(forKeys: Set(keys))
             guard values?.isRegularFile == true else { continue }
 
-            let relative = fileURL.path.replacingOccurrences(
-                of: folderURL.path.hasSuffix("/") ? folderURL.path : folderURL.path + "/",
-                with: ""
-            )
-
+            let relative = relativePath(of: fileURL, under: folderURL)
             guard BO2ZombiesManifest.contains(relative) else { continue }
 
-            let size = robustFileSize(for: fileURL, resourceValues: values)
+            // Coordinate the read. This is important for iCloud Drive and other
+            // File Provider-backed folders because metadata can remain at zero
+            // until the provider hydrates the child item.
+            let size = coordinatedRobustFileSize(for: fileURL, resourceValues: values)
             totalBytes += size
             results.append(makeScannedFile(path: relative, size: size))
         }
@@ -69,8 +70,9 @@ actor PS3DumpScanner {
     }
 
     /// Scans ZIP metadata directly from the central directory.
-    /// Only BO2 Zombies files listed in BO2ZombiesManifest are retained.
-    /// This intentionally does not decompress the archive.
+    /// Zero-byte manifest entries are deliberately retained in the report so
+    /// callers can mark the import as incomplete instead of silently treating
+    /// missing payload bytes as a successful match.
     func scan(zipURL: URL) throws -> ScanReport {
         guard FileManager.default.fileExists(atPath: zipURL.path) else {
             throw ScannerError.cannotOpenArchive
@@ -84,23 +86,37 @@ actor PS3DumpScanner {
         }
 
         var sawAnyFile = false
-        var results: [ScannedFile] = []
-        var totalBytes: Int64 = 0
+        var resultsByPath: [String: ScannedFile] = [:]
 
         for entry in archive {
             guard entry.type == .file else { continue }
             sawAnyFile = true
-
             guard BO2ZombiesManifest.contains(entry.path) else { continue }
 
-            let rawSize = Int64(entry.uncompressedSize)
-            let size = sanitizedSize(rawSize)
-            totalBytes += size
-            results.append(makeScannedFile(path: entry.path, size: size))
+            let size = sanitizedSize(Int64(entry.uncompressedSize))
+            let scanned = makeScannedFile(path: entry.path, size: size)
+
+            // If a malformed ZIP contains duplicate manifest paths, retain the
+            // largest logical entry rather than double-counting it.
+            let key = normalizedManifestKey(entry.path)
+            if let old = resultsByPath[key] {
+                if scanned.size > old.size {
+                    resultsByPath[key] = scanned
+                }
+            } else {
+                resultsByPath[key] = scanned
+            }
         }
 
         guard sawAnyFile else { throw ScannerError.emptyArchive }
+
+        let results = Array(resultsByPath.values)
         guard !results.isEmpty else { throw ScannerError.noManifestMatches }
+
+        let totalBytes = results.reduce(Int64(0)) { partial, file in
+            let (sum, overflow) = partial.addingReportingOverflow(file.size)
+            return overflow ? impossibleSizeThreshold : min(sum, impossibleSizeThreshold)
+        }
 
         return makeReport(
             name: zipURL.deletingPathExtension().lastPathComponent,
@@ -109,10 +125,45 @@ actor PS3DumpScanner {
         )
     }
 
+    private func relativePath(of fileURL: URL, under folderURL: URL) -> String {
+        let base = folderURL.standardizedFileURL.path
+        let file = fileURL.standardizedFileURL.path
+        let prefix = base.hasSuffix("/") ? base : base + "/"
+
+        if file.hasPrefix(prefix) {
+            return String(file.dropFirst(prefix.count))
+        }
+        return fileURL.lastPathComponent
+    }
+
+    private func coordinatedRobustFileSize(
+        for fileURL: URL,
+        resourceValues: URLResourceValues?
+    ) -> Int64 {
+        var coordinatedSize: Int64 = 0
+        var coordinationError: NSError?
+
+        let coordinator = NSFileCoordinator()
+        coordinator.coordinate(
+            readingItemAt: fileURL,
+            options: [.withoutChanges],
+            error: &coordinationError
+        ) { coordinatedURL in
+            coordinatedSize = robustFileSize(for: coordinatedURL, resourceValues: resourceValues)
+        }
+
+        if coordinatedSize > 0 {
+            return coordinatedSize
+        }
+
+        // If coordination failed or the provider still reported zero, retry
+        // directly. Some local providers do not need coordination.
+        return robustFileSize(for: fileURL, resourceValues: resourceValues)
+    }
+
     /// File Provider / security-scoped URLs on iOS can report a missing or zero
-    /// `fileSize` even when the file has data. Try progressively stronger
-    /// metadata sources, then use FileHandle.seekToEnd() as the final fallback.
-    /// This does not read the full file into memory.
+    /// fileSize even when the file has data. Try progressively stronger
+    /// metadata sources, then force a real provider-backed read/seek.
     private func robustFileSize(
         for fileURL: URL,
         resourceValues: URLResourceValues?
@@ -129,35 +180,57 @@ actor PS3DumpScanner {
             candidates.append(Int64(value))
         }
 
+        if let freshValues = try? fileURL.resourceValues(forKeys: [
+            .fileSizeKey,
+            .fileAllocatedSizeKey,
+            .totalFileAllocatedSizeKey
+        ]) {
+            if let value = freshValues.fileSize { candidates.append(Int64(value)) }
+            if let value = freshValues.totalFileAllocatedSize { candidates.append(Int64(value)) }
+            if let value = freshValues.fileAllocatedSize { candidates.append(Int64(value)) }
+        }
+
         if let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
            let number = attributes[.size] as? NSNumber {
             candidates.append(number.int64Value)
         }
 
-        // Prefer any believable non-zero metadata result.
         if let size = candidates.first(where: { $0 > 0 && $0 < impossibleSizeThreshold }) {
             return size
         }
 
-        // Some iOS File Provider items expose 0 in metadata until the item is
-        // actually opened. Seeking to EOF forces the provider-backed handle to
-        // expose the logical file length without loading the entire file.
+        // Opening and reading one byte is intentional: a seek alone is not
+        // sufficient to hydrate every iOS File Provider item.
         if let handle = try? FileHandle(forReadingFrom: fileURL) {
             defer { try? handle.close() }
-            if let end = try? handle.seekToEnd(),
-               end > 0,
-               end < UInt64(impossibleSizeThreshold) {
+
+            if let firstByte = try? handle.read(upToCount: 1), firstByte?.isEmpty == false {
+                if let end = try? handle.seekToEnd(),
+                   end > 0,
+                   end < UInt64(impossibleSizeThreshold) {
+                    return Int64(end)
+                }
+            } else if let end = try? handle.seekToEnd(),
+                      end > 0,
+                      end < UInt64(impossibleSizeThreshold) {
                 return Int64(end)
             }
         }
 
-        // A genuinely empty file remains zero.
         return 0
     }
 
     private func sanitizedSize(_ size: Int64) -> Int64 {
         guard size >= 0, size < impossibleSizeThreshold else { return 0 }
         return size
+    }
+
+    private func normalizedManifestKey(_ path: String) -> String {
+        let normalized = path.replacingOccurrences(of: "\\", with: "/").lowercased()
+        if let range = normalized.range(of: "ps3_game/") {
+            return String(normalized[range.lowerBound...])
+        }
+        return normalized.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
 
     private func makeReport(name: String, results: [ScannedFile], totalBytes: Int64) -> ScanReport {
