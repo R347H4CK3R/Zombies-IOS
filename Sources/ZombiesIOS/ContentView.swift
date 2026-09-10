@@ -31,16 +31,37 @@ struct ContentView: View {
                     Section("Manifest Match") {
                         LabeledContent("Found", value: "\(report.totalFiles) / \(expectedCount)")
                         LabeledContent("Known size", value: ByteCountFormatter.string(fromByteCount: report.totalBytes, countStyle: .file))
+                        LabeledContent("Zero-byte files", value: "\(report.zeroByteFiles.count)")
+                        LabeledContent("Build ready", value: report.isBuildReady ? "Yes" : "No")
 
-                        if report.totalFiles < expectedCount {
-                            Text("\(expectedCount - report.totalFiles) manifest file(s) were not present in this ZIP.")
+                        if report.missingManifestCount > 0 {
+                            Text("\(report.missingManifestCount) manifest file(s) were not present.")
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.orange)
+                        }
+
+                        if !report.zeroByteFiles.isEmpty {
+                            Text("This import is incomplete. Zero-byte BO2 files are missing payload data and must be re-copied before an IPA build.")
+                                .font(.caption)
+                                .foregroundStyle(.red)
                         }
 
                         if let exportedReportURL {
                             ShareLink(item: exportedReportURL) {
                                 Label("Export Filtered JSON Report", systemImage: "square.and.arrow.up")
+                            }
+                        }
+                    }
+
+                    if !report.zeroByteFiles.isEmpty {
+                        Section("Files Needing Re-copy") {
+                            ForEach(report.zeroByteFiles) { file in
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(file.name)
+                                    Text(file.relativePath)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                     }
@@ -55,7 +76,8 @@ struct ContentView: View {
                                 HStack {
                                     Text(file.category.rawValue)
                                     if file.size == 0 {
-                                        Text("size unknown")
+                                        Text("0 bytes — incomplete")
+                                            .foregroundStyle(.red)
                                     } else {
                                         Text(ByteCountFormatter.string(fromByteCount: file.size, countStyle: .file))
                                     }
@@ -90,7 +112,7 @@ struct ContentView: View {
 
         Task {
             do {
-                let localZip = try makeLocalCopy(of: zipURL)
+                let localZip = try makeVerifiedLocalCopy(of: zipURL)
 
                 let fm = FileManager.default
                 let attrs = try fm.attributesOfItem(atPath: localZip.path)
@@ -122,7 +144,14 @@ struct ContentView: View {
                     report = newReport
                     exportedReportURL = reportURL
                     scanning = false
-                    statusMessage = "Import complete. Only files from the BO2 Zombies manifest were retained."
+
+                    if newReport.isBuildReady {
+                        statusMessage = "Import verified. All manifest files are present and non-empty."
+                    } else if !newReport.zeroByteFiles.isEmpty {
+                        statusMessage = "Import scanned, but \(newReport.zeroByteFiles.count) manifest file(s) contain 0 bytes. Re-copy those source files before building."
+                    } else {
+                        statusMessage = "Import scanned, but \(newReport.missingManifestCount) manifest file(s) are missing."
+                    }
                 }
             } catch {
                 await MainActor.run {
@@ -141,7 +170,7 @@ struct ContentView: View {
         }
     }
 
-    private func makeLocalCopy(of sourceURL: URL) throws -> URL {
+    private func makeVerifiedLocalCopy(of sourceURL: URL) throws -> URL {
         let fm = FileManager.default
 
         let imports = try fm.url(
@@ -152,10 +181,15 @@ struct ContentView: View {
         ).appendingPathComponent("Imports", isDirectory: true)
 
         try fm.createDirectory(at: imports, withIntermediateDirectories: true)
+        try removeStaleImports(in: imports)
 
-        let destination = imports.appendingPathComponent("BO2-Zombies-\(UUID().uuidString).zip")
+        let id = UUID().uuidString
+        let partial = imports.appendingPathComponent("BO2-Zombies-\(id).partial")
+        let destination = imports.appendingPathComponent("BO2-Zombies-\(id).zip")
+
         var coordinationError: NSError?
         var copyError: Error?
+        var coordinatedSourceSize: Int64?
 
         let accessed = sourceURL.startAccessingSecurityScopedResource()
         defer {
@@ -171,13 +205,42 @@ struct ContentView: View {
             error: &coordinationError
         ) { coordinatedURL in
             do {
+                if let attributes = try? fm.attributesOfItem(atPath: coordinatedURL.path),
+                   let number = attributes[.size] as? NSNumber,
+                   number.int64Value > 0 {
+                    coordinatedSourceSize = number.int64Value
+                }
+
+                if fm.fileExists(atPath: partial.path) {
+                    try fm.removeItem(at: partial)
+                }
+
+                try fm.copyItem(at: coordinatedURL, to: partial)
+
+                let copiedAttributes = try fm.attributesOfItem(atPath: partial.path)
+                let copiedSize = (copiedAttributes[.size] as? NSNumber)?.int64Value ?? 0
+
+                guard copiedSize >= 4 else {
+                    throw ImportError.copyFailed("The copied ZIP is empty or truncated.")
+                }
+
+                if let sourceSize = coordinatedSourceSize, sourceSize != copiedSize {
+                    throw ImportError.copyFailed(
+                        "The ZIP copy was incomplete (source \(sourceSize) bytes, local copy \(copiedSize) bytes)."
+                    )
+                }
+
                 if fm.fileExists(atPath: destination.path) {
                     try fm.removeItem(at: destination)
                 }
-                try fm.copyItem(at: coordinatedURL, to: destination)
+                try fm.moveItem(at: partial, to: destination)
             } catch {
                 copyError = error
             }
+        }
+
+        if fm.fileExists(atPath: partial.path) {
+            try? fm.removeItem(at: partial)
         }
 
         if let copyError {
@@ -191,7 +254,33 @@ struct ContentView: View {
             throw ImportError.copyFailed("iOS did not provide a readable local copy of the ZIP.")
         }
 
+        // Opening with ZIPFoundation verifies that the central directory can
+        // actually be parsed before the scanner spends time on the manifest.
+        do {
+            _ = try Archive(url: destination, accessMode: .read)
+        } catch {
+            try? fm.removeItem(at: destination)
+            throw ImportError.invalidZip("The local ZIP copy is corrupt or its central directory is unreadable.")
+        }
+
         return destination
+    }
+
+    private func removeStaleImports(in imports: URL) throws {
+        let fm = FileManager.default
+        let oldFiles = try fm.contentsOfDirectory(
+            at: imports,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        )
+
+        let cutoff = Date().addingTimeInterval(-24 * 60 * 60)
+        for url in oldFiles where url.lastPathComponent.hasPrefix("BO2-Zombies-") {
+            let values = try? url.resourceValues(forKeys: [.contentModificationDateKey])
+            if let modified = values?.contentModificationDate, modified < cutoff {
+                try? fm.removeItem(at: url)
+            }
+        }
     }
 
     private enum ImportError: LocalizedError {
