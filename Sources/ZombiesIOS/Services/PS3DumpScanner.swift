@@ -164,7 +164,7 @@ actor PS3DumpScanner {
         }
 
         while true {
-            guard let chunk = try? handle.read(upToCount: readChunkSize), let chunk, !chunk.isEmpty else {
+            guard let chunk = try? handle.read(upToCount: readChunkSize), !chunk.isEmpty else {
                 break
             }
 
