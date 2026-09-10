@@ -7,7 +7,7 @@ struct ContentView: View {
     @State private var report: ScanReport?
     @State private var exportedReportURL: URL?
     @State private var errorMessage: String?
-    @State private var statusMessage = "Share a ZIP containing the BO2 Zombies files listed in the built-in manifest. The full PS3 dump is no longer required."
+    @State private var statusMessage = "Choose your extracted BO2 game folder. The app will read the required Zombies files directly; no ZIP is required."
 
     private let scanner = PS3DumpScanner()
     private let directFolderImporter = DirectFolderImporter()
@@ -19,7 +19,15 @@ struct ContentView: View {
                 Section("Import BO2 Zombies Data") {
                     Text(statusMessage)
                         .font(.callout)
-                    Text("Keep the original PS3_GAME/USRDIR/english paths inside the ZIP. Extra files are ignored.")
+
+                    Button {
+                        showingFolderPicker = true
+                    } label: {
+                        Label("Choose BO2 Game Folder", systemImage: "folder")
+                    }
+                    .disabled(scanning)
+
+                    Text("Select the extracted BO2 folder directly. You can choose PS3_GAME, USRDIR, english, or a parent folder containing those paths. ZIP import is optional.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -94,6 +102,17 @@ struct ContentView: View {
                 }
             }
             .navigationTitle("Zombies Importer")
+            .sheet(isPresented: $showingFolderPicker) {
+                FolderPicker(
+                    onPick: { url in
+                        showingFolderPicker = false
+                        beginFolderImport(url)
+                    },
+                    onCancel: {
+                        showingFolderPicker = false
+                    }
+                )
+            }
             .onOpenURL { url in
                 guard url.pathExtension.lowercased() == "zip" else {
                     errorMessage = "ZombiesIOS received an unsupported file. Share a ZIP containing the BO2 Zombies manifest files."
