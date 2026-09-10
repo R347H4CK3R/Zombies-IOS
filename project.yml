@@ -20,6 +20,7 @@ targets:
       - Sources/ZombiesIOS
     dependencies:
       - package: ZIPFoundation
+      - sdk: libz.tbd
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.r347h4ck3r.zombiesios
@@ -28,3 +29,4 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Sources/ZombiesIOS/Info.plist
         SUPPORTS_MACCATALYST: NO
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/ZombiesIOS/Support/T6InflateBridge.h
