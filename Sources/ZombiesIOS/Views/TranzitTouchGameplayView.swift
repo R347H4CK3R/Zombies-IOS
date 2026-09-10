@@ -10,9 +10,13 @@ struct TranzitTouchGameplayView: View {
     @State private var look = CGSize.zero
     @State private var firing = false
     @State private var aiming = false
-    @State private var runtimeStatus = "Checking BO2 stream…"
-    @State private var probedBytes = 0
+    @State private var runtimeStatus = "Opening BO2 stream…"
+    @State private var streamedBytes: UInt64 = 0
+    @State private var streamOffset: UInt64 = 0
+    @State private var streamProgress: Double = 0
+    @State private var anchorSamples = 0
     @State private var runtimeError: String?
+    @State private var streaming = false
 
     private var area: TranzitArea { loadedArea.area }
 
@@ -39,8 +43,13 @@ struct TranzitTouchGameplayView: View {
                         }
                     }.padding(.horizontal).padding(.top, 8)
 
+                    ProgressView(value: streamProgress)
+                        .padding(.horizontal)
+                        .tint(.white)
+
                     HStack(spacing: 12) {
-                        Text("STREAM \(probedBytes) B")
+                        Text("READ \(ByteCountFormatter.string(fromByteCount: Int64(streamedBytes), countStyle: .file))")
+                        Text("ANCHORS \(anchorSamples)/3")
                         Text("SHARED \(sharedContainerCount)")
                         Text("AUDIO \(audioBankCount)")
                     }
@@ -76,7 +85,7 @@ struct TranzitTouchGameplayView: View {
                                 actionButton("FIRE", active: firing) { firing.toggle() }
                             }
                             HStack(spacing: 14) {
-                                actionButton("USE", active: false) { probeRuntimeResource() }
+                                actionButton(streaming ? "READ…" : "STREAM", active: streaming) { streamNextChunk() }
                                 actionButton("JUMP", active: false) { }
                             }
                         }
@@ -88,25 +97,53 @@ struct TranzitTouchGameplayView: View {
         .navigationTitle("Touch Runtime")
         .navigationBarTitleDisplayMode(.inline)
         .preferredColorScheme(.dark)
-        .task { probeRuntimeResource() }
+        .task { await validateStream() }
     }
 
-    private func probeRuntimeResource() {
-        let fileURL = rootURL.appendingPathComponent(loadedArea.fastFile.relativePath)
+    private func validateStream() async {
+        streaming = true
+        runtimeError = nil
+        let reader = FastFileStreamReader(rootURL: rootURL, resource: loadedArea.fastFile)
         do {
-            let handle = try FileHandle(forReadingFrom: fileURL)
-            defer { try? handle.close() }
-            let data = try handle.read(upToCount: 4096) ?? Data()
-            guard !data.isEmpty else {
-                throw CocoaError(.fileReadUnknown)
-            }
-            probedBytes = data.count
-            runtimeStatus = "BO2 STREAM ONLINE"
-            runtimeError = nil
+            let samples = try await reader.sampleAnchors()
+            anchorSamples = samples.count
+            streamedBytes = UInt64(samples.reduce(0) { $0 + $1.data.count })
+            runtimeStatus = samples.count >= 3 ? "BO2 STREAM READY" : "BO2 STREAM PARTIAL"
+            streaming = false
+            streamNextChunk()
         } catch {
-            probedBytes = 0
+            streaming = false
             runtimeStatus = "STREAM OFFLINE"
-            runtimeError = "Runtime could not continue reading \(loadedArea.fastFile.fileName): \(error.localizedDescription)"
+            runtimeError = "Runtime could not sample \(loadedArea.fastFile.fileName): \(error.localizedDescription)"
+        }
+    }
+
+    private func streamNextChunk() {
+        guard !streaming else { return }
+        streaming = true
+        runtimeError = nil
+
+        Task {
+            let reader = FastFileStreamReader(rootURL: rootURL, resource: loadedArea.fastFile)
+            do {
+                let fileSize = UInt64(max(0, loadedArea.fastFile.byteCount))
+                let offset = streamOffset < fileSize ? streamOffset : 0
+                let chunk = try await reader.read(offset: offset)
+                await MainActor.run {
+                    streamedBytes += UInt64(chunk.data.count)
+                    streamOffset = chunk.nextOffset >= chunk.fileSize ? 0 : chunk.nextOffset
+                    streamProgress = chunk.progress
+                    runtimeStatus = "STREAMING BO2 DATA"
+                    runtimeError = nil
+                    streaming = false
+                }
+            } catch {
+                await MainActor.run {
+                    runtimeStatus = "STREAM ERROR"
+                    runtimeError = "Incremental read failed: \(error.localizedDescription)"
+                    streaming = false
+                }
+            }
         }
     }
 
