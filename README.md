@@ -2,7 +2,9 @@
 
 Native iOS Zombies project targeting iPhone 16 Plus.
 
-## Phase 1: PS3 dump scanner/importer
+## Phase 1: PS3 dump scanner/importer (frozen)
+
+The scanner is now considered stable enough for development. Runtime work should consume verified imported files progressively instead of blocking on repeated filtering passes.
 
 The first component is an on-device scanner that lets the user select a PS3 game folder from the iOS Files app, including folders located on an attached USB drive.
 
@@ -17,16 +19,14 @@ It recursively inventories the selected folder, identifies likely Call of Duty: 
 - Flag likely Zombies files such as `zm_*`, FastFiles, scripts, executable modules, audio, textures, models, and archives.
 - Export a portable JSON inventory for later converter development.
 
-### Next phases
+### Current runtime phase
 
-1. FastFile/zone inspection.
-2. Texture conversion.
-3. Model and animation conversion.
-4. Audio conversion.
-5. Map metadata and collision import.
-6. Native Zombies gameplay runtime.
-7. iPhone touch controls and HUD.
-8. GitHub Actions iOS build pipeline.
+1. Persist verified BO2 Zombies files even when the legacy manifest is incomplete.
+2. Build a Tranzit runtime index from imported FastFiles, IPAKs, audio banks, and discovered references.
+3. Resolve Tranzit area resources into native map/runtime structures.
+4. Add map metadata, collision, textures, models, animation, and audio conversion.
+5. Add native Zombies gameplay, iPhone touch controls, and HUD.
+6. Continue producing IPA builds through GitHub Actions.
 
 ## Important
 
