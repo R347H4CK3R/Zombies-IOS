@@ -73,7 +73,6 @@ actor DirectFolderImporter {
                 continue
             }
 
-            matchedCount += 1
             let destination = staging.appendingPathComponent(canonical)
             try fm.createDirectory(
                 at: destination.deletingLastPathComponent(),
@@ -82,13 +81,15 @@ actor DirectFolderImporter {
 
             let copiedBytes = coordinatedMaterialize(sourceURL, to: destination)
 
-            // If the provider could not materialize the payload, preserve an
-            // explicit zero-byte local file. The scan will then accurately
-            // report this exact source item instead of mistaking metadata for
-            // real data.
-            if copiedBytes == 0 && !fm.fileExists(atPath: destination.path) {
-                fm.createFile(atPath: destination.path, contents: Data())
+            // A manifest filename is not usable unless its payload was actually
+            // materialized. Never manufacture zero-byte placeholders: they make
+            // an incomplete BO2 dump look more complete than it really is.
+            guard copiedBytes > 0 else {
+                try? fm.removeItem(at: destination)
+                continue
             }
+
+            matchedCount += 1
         }
 
         guard matchedCount > 0 else {
