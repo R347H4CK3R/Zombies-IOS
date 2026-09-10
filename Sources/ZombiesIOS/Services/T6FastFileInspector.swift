@@ -64,18 +64,15 @@ enum T6FastFileInspector {
             )
         }
 
-        // Retail PS3 BO2 dumps use the signed Treyarch FastFile header. Version
-        // 146 is stored big-endian in these files, and PHEEBs71 identifies the
-        // signed auth header. The PS3_GAME path disambiguates the console target.
+        // Retail BO2 PS3 FastFiles identify themselves by the signed Treyarch
+        // container magic, big-endian T6 version 146, and PHEEBs71 auth header.
+        // Do not require "PS3_GAME/" in the relative path: iOS lets the user pick
+        // PS3_GAME, USRDIR, or a deeper subfolder as the persisted import root, so
+        // the exact same PS3 FastFile can legitimately have a shorter relative path.
         let authMagic = header.count >= 20 ? ascii(header, offset: 12, length: 8) : ""
-        let pathLooksPS3 = resource.relativePath
-            .replacingOccurrences(of: "\\", with: "/")
-            .uppercased()
-            .contains("PS3_GAME/")
         let signedPS3 = magic == signedMagic &&
             bigVersion == ps3Version &&
-            authMagic == authHeaderMagic &&
-            pathLooksPS3
+            authMagic == authHeaderMagic
 
         if signedPS3 {
             let embeddedName = header.count >= 56 ? asciiCString(header, offset: 24, length: 32) : nil
