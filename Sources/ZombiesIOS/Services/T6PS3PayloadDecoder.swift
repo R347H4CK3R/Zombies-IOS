@@ -7,6 +7,8 @@ struct T6DecodedPayloadReport: Sendable {
     let firstChunkOffset: UInt64
     let stoppedAtOffset: UInt64
     let payloadPrefix: Data
+    let zoneSize: UInt32?
+    let externalZoneSize: UInt32?
     let firstError: String?
 
     var isUsable: Bool {
@@ -85,8 +87,10 @@ actor T6PS3PayloadDecoder {
             let compressed = try handle.read(upToCount: Int(compressedSize)) ?? Data()
             guard compressed.count == Int(compressedSize) else { throw DecodeError.truncatedChunk(chunkIndex) }
 
-            var output = Data(count: xChunkOutputCapacity)
+            let outputCapacity = xChunkOutputCapacity
+            var output = Data(count: outputCapacity)
             var outputSize: Int = 0
+            let inputCount = compressed.count
             let result: Int32 = compressed.withUnsafeBytes { inputRaw in
                 output.withUnsafeMutableBytes { outputRaw in
                     guard let input = inputRaw.bindMemory(to: UInt8.self).baseAddress,
@@ -95,20 +99,22 @@ actor T6PS3PayloadDecoder {
                     }
                     return Int32(zombies_t6_inflate_raw(
                         input,
-                        compressed.count,
+                        inputCount,
                         out,
-                        output.count,
+                        outputCapacity,
                         &outputSize
                     ))
                 }
             }
 
             guard result == 0 else { throw DecodeError.inflateFailed(chunkIndex, result) }
-            guard outputSize > 0 && outputSize <= output.count else {
+            guard outputSize > 0 && outputSize <= outputCapacity else {
                 throw DecodeError.inflateFailed(chunkIndex, -5)
             }
 
-            output.removeSubrange(outputSize..<output.count)
+            if outputSize < output.count {
+                output.removeSubrange(outputSize..<output.count)
+            }
             let remaining = maxDecodedBytes - prefix.count
             if output.count <= remaining {
                 prefix.append(output)
@@ -122,6 +128,9 @@ actor T6PS3PayloadDecoder {
             offset = chunkEnd
         }
 
+        let zoneSize = prefix.count >= 4 ? Self.littleEndianUInt32(prefix, offset: 0) : nil
+        let externalSize = prefix.count >= 8 ? Self.littleEndianUInt32(prefix, offset: 4) : nil
+
         return T6DecodedPayloadReport(
             compressedBytesRead: compressedRead,
             decodedBytes: decodedTotal,
@@ -129,15 +138,17 @@ actor T6PS3PayloadDecoder {
             firstChunkOffset: 12,
             stoppedAtOffset: offset,
             payloadPrefix: prefix,
+            zoneSize: zoneSize,
+            externalZoneSize: externalSize,
             firstError: nil
         )
     }
 
-    private static func littleEndianUInt32(_ data: Data) -> UInt32 {
-        guard data.count >= 4 else { return 0 }
-        return UInt32(data[0]) |
-            (UInt32(data[1]) << 8) |
-            (UInt32(data[2]) << 16) |
-            (UInt32(data[3]) << 24)
+    private static func littleEndianUInt32(_ data: Data, offset: Int = 0) -> UInt32 {
+        guard data.count >= offset + 4 else { return 0 }
+        return UInt32(data[offset]) |
+            (UInt32(data[offset + 1]) << 8) |
+            (UInt32(data[offset + 2]) << 16) |
+            (UInt32(data[offset + 3]) << 24)
     }
 }
