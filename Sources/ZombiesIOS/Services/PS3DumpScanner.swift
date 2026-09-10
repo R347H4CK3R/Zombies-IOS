@@ -22,7 +22,7 @@ actor PS3DumpScanner {
 
     private let impossibleSizeThreshold: Int64 = 1 << 40 // 1 TiB
     private let readChunkSize = 1024 * 1024
-    private let maxReferencesPerFile = 500
+    private let maxReferencesPerFile = 1000
     private let maxReferenceLength = 180
 
     func scan(folderURL: URL) throws -> ScanReport {
@@ -201,6 +201,16 @@ actor PS3DumpScanner {
                 }
             }
 
+            // BO2 metadata occasionally stores identifiers as UTF-16LE. The byte-wise
+            // ASCII pass above cannot see those because every character is separated by
+            // a zero byte, so carve wide-string candidates from both possible alignments.
+            carveUTF16LEReferences(
+                bytes: bytes,
+                baseOffset: totalRead,
+                refs: &refs,
+                seen: &seen
+            )
+
             totalRead += Int64(chunk.count)
         }
 
@@ -236,6 +246,61 @@ actor PS3DumpScanner {
         if ext == "sabs" { return "BO2 SABS audio bank" }
         if ext == "sabl" { return "BO2 SABL audio bank" }
         return ext.isEmpty ? "unknown" : ext.uppercased()
+    }
+
+    private func carveUTF16LEReferences(
+        bytes: [UInt8],
+        baseOffset: Int64,
+        refs: inout [AssetReference],
+        seen: inout Set<String>
+    ) {
+        guard bytes.count >= 8, refs.count < maxReferencesPerFile else { return }
+
+        for alignment in 0...1 {
+            var token: [UInt8] = []
+            var tokenOffset: Int64 = 0
+            var i = alignment
+
+            func flush() {
+                defer { token.removeAll(keepingCapacity: true) }
+                guard token.count >= 4,
+                      let raw = String(bytes: token.prefix(maxReferenceLength), encoding: .ascii)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines),
+                      looksLikeAssetReference(raw) else { return }
+
+                let normalized = raw.replacingOccurrences(of: "\\", with: "/")
+                let key = normalized.lowercased()
+                guard !seen.contains(key), refs.count < maxReferencesPerFile else { return }
+                seen.insert(key)
+                refs.append(
+                    AssetReference(
+                        name: normalized,
+                        kind: classifyAssetReference(normalized),
+                        offset: tokenOffset
+                    )
+                )
+            }
+
+            while i + 1 < bytes.count {
+                let lo = bytes[i]
+                let hi = bytes[i + 1]
+
+                if hi == 0 && isAssetTokenByte(lo) {
+                    if token.isEmpty { tokenOffset = baseOffset + Int64(i) }
+                    if token.count < maxReferenceLength {
+                        token.append(lo)
+                    } else {
+                        token.removeAll(keepingCapacity: true)
+                    }
+                    i += 2
+                    continue
+                }
+
+                flush()
+                i += 2
+            }
+            flush()
+        }
     }
 
     private func looksLikeAssetReference(_ raw: String) -> Bool {
@@ -286,11 +351,23 @@ actor PS3DumpScanner {
             return keywords.contains(where: value.contains)
         }
 
+        // Bare identifiers are where compressed/binary payloads produce the most
+        // accidental matches. Require enough structure to distinguish real BO2 names
+        // from tiny fragments such as "zm_v", "zm_s", or "zm_h".
+        guard value.count >= 6 else { return false }
+
         let keywords = [
-            "weapon_", "wpn_", "xmodel_", "xanim_", "material_",
-            "zombie_", "zmb_", "zm_", "transit_", "snd_", "sound_"
+            "weapon_", "wpn_", "xmodel_", "xanim_", "material_", "image_",
+            "zombie_", "zmb_", "zm_", "transit_", "snd_", "sound_",
+            "script_", "maps_", "ui_", "code_", "common_", "patch_", "so_"
         ]
-        return keywords.contains(where: value.hasPrefix)
+        guard keywords.contains(where: value.hasPrefix) else { return false }
+
+        if value.hasPrefix("zm_") {
+            let remainder = String(value.dropFirst(3))
+            guard remainder.count >= 3 else { return false }
+        }
+        return true
     }
 
     private func classifyAssetReference(_ raw: String) -> String {
