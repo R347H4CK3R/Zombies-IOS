@@ -56,7 +56,7 @@ actor T6PS3PayloadDecoder {
             case .salsaFailed(let index):
                 return "XChunk \(index) Salsa20 decryption failed."
             case .noWorkingSignedKey(let name):
-                return "\(name) is a signed T6 PS3 FastFile, but neither known BO2 PC nor Xenon Salsa20 key produced a valid first XChunk. A PS3-specific T6 key is still required."
+                return "\(name) is a signed T6 PS3 FastFile, but no configured Salsa20 key produced a valid first XChunk."
             }
         }
     }
@@ -168,6 +168,7 @@ actor T6PS3PayloadDecoder {
 
         let url = rootURL.appendingPathComponent(resource.relativePath)
         var candidates = loadExternalKeyCandidates(rootURL: rootURL)
+        candidates.append(KeyCandidate(name: "BO2 PS3", bytes: T6Salsa20.ps3Key))
         candidates.append(KeyCandidate(name: "BO2 Xenon", bytes: T6Salsa20.xenonKey))
         candidates.append(KeyCandidate(name: "BO2 PC", bytes: T6Salsa20.pcKey))
 
