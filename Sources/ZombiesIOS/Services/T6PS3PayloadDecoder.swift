@@ -34,6 +34,7 @@ struct T6DecodedPayloadReport: Sendable {
 actor T6PS3PayloadDecoder {
     enum DecodeError: LocalizedError {
         case invalidContainer
+        case signedEncryptedContainer(String)
         case invalidChunkSize(UInt32, Int)
         case truncatedChunk(Int)
         case inflateFailed(Int, Int32)
@@ -41,7 +42,9 @@ actor T6PS3PayloadDecoder {
         var errorDescription: String? {
             switch self {
             case .invalidContainer:
-                return "The selected FastFile is not a supported T6 PS3 server FastFile."
+                return "The selected FastFile is not a recognized T6 PS3 FastFile."
+            case .signedEncryptedContainer(let name):
+                return "\(name) is a valid signed T6 PS3 FastFile (TAff0100/PHEEBs71). Its payload is encrypted and must be decrypted before raw-DEFLATE XChunks can be decoded."
             case .invalidChunkSize(let size, let index):
                 return "XChunk \(index) has invalid compressed size \(size)."
             case .truncatedChunk(let index):
@@ -54,8 +57,9 @@ actor T6PS3PayloadDecoder {
 
     private let xChunkOutputCapacity = Int(T6FastFileInspector.maxXChunkSize)
 
-    /// Decodes a bounded prefix of the T6 zone payload directly from the external
-    /// security-scoped BO2 folder. Nothing is persisted to the app container.
+    /// Decodes a bounded prefix when the PS3 FastFile exposes an unencrypted
+    /// XChunk stream. Signed retail TAff0100 files are recognized separately so
+    /// their auth/signature bytes are never misread as compressed chunk sizes.
     func decodePrefix(
         rootURL: URL,
         resource: TranzitLoadedResource,
@@ -64,13 +68,16 @@ actor T6PS3PayloadDecoder {
     ) throws -> T6DecodedPayloadReport {
         let container = try T6FastFileInspector.inspect(rootURL: rootURL, resource: resource, maxChunks: 1)
         guard container.isT6PS3 else { throw DecodeError.invalidContainer }
+        guard container.supportsRawXChunks else {
+            throw DecodeError.signedEncryptedContainer(container.embeddedName ?? resource.fileName)
+        }
 
         let url = rootURL.appendingPathComponent(resource.relativePath)
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
 
         let fileSize = UInt64(max(0, resource.byteCount))
-        var offset: UInt64 = 12
+        var offset = container.payloadOffset
         var chunkIndex = 0
         var compressedRead: UInt64 = 0
         var decodedTotal: UInt64 = 0
@@ -152,7 +159,7 @@ actor T6PS3PayloadDecoder {
             compressedBytesRead: compressedRead,
             decodedBytes: decodedTotal,
             decodedChunkCount: chunkIndex,
-            firstChunkOffset: 12,
+            firstChunkOffset: container.payloadOffset,
             stoppedAtOffset: offset,
             payloadPrefix: prefix,
             zoneSize: zoneSize,
