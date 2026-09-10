@@ -7,6 +7,7 @@ struct ContentView: View {
     @State private var report: ScanReport?
     @State private var exportedReportURL: URL?
     @State private var errorMessage: String?
+    @State private var showingFolderPicker = false
     @State private var statusMessage = "Choose your extracted BO2 game folder. The app will read the required Zombies files directly; no ZIP is required."
 
     private let scanner = PS3DumpScanner()
@@ -27,7 +28,7 @@ struct ContentView: View {
                     }
                     .disabled(scanning)
 
-                    Text("Select the extracted BO2 folder directly. You can choose PS3_GAME, USRDIR, english, or a parent folder containing those paths. ZIP import is optional.")
+                    Text("Select the extracted BO2 folder directly. You can choose PS3_GAME, USRDIR, english, or a parent folder containing those paths. No ZIP is required.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -113,13 +114,6 @@ struct ContentView: View {
                     }
                 )
             }
-            .onOpenURL { url in
-                guard url.pathExtension.lowercased() == "zip" else {
-                    errorMessage = "ZombiesIOS received an unsupported file. Share a ZIP containing the BO2 Zombies manifest files."
-                    return
-                }
-                beginZipImport(url)
-            }
         }
     }
 
@@ -141,21 +135,21 @@ struct ContentView: View {
                     scanning = false
 
                     if result.report.isBuildReady, let importedURL = result.importedAssetsURL {
-                        statusMessage = "Direct import verified. All manifest files were physically read and copied to \\(importedURL.lastPathComponent). Build ready."
+                        statusMessage = "Direct import verified. All manifest files were physically read and copied to \(importedURL.lastPathComponent). Build ready."
                     } else if !result.report.zeroByteFiles.isEmpty {
-                        statusMessage = "Direct import found \\(result.report.zeroByteFiles.count) source file(s) that still returned zero bytes after a real read. Those source files themselves need to be restored/re-copied."
+                        statusMessage = "Direct import found \(result.report.zeroByteFiles.count) source file(s) that still returned zero bytes after a real read. Those source files themselves need to be restored/re-copied."
                     } else {
-                        statusMessage = "Direct import is missing \\(result.report.missingManifestCount) required manifest file(s)."
+                        statusMessage = "Direct import is missing \(result.report.missingManifestCount) required manifest file(s)."
                     }
                 }
             } catch {
                 await MainActor.run {
                     let nsError = error as NSError
                     errorMessage = """
-                    Direct folder import failed: \\(error.localizedDescription)
-                    Domain: \\(nsError.domain)
-                    Code: \\(nsError.code)
-                    Folder: \\(folderURL.lastPathComponent)
+                    Direct folder import failed: \(error.localizedDescription)
+                    Domain: \(nsError.domain)
+                    Code: \(nsError.code)
+                    Folder: \(folderURL.lastPathComponent)
                     """
                     scanning = false
                     statusMessage = "Direct import failed."
