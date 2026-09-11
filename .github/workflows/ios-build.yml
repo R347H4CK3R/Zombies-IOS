@@ -49,50 +49,6 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: Run native cache unit tests
-        run: |
-          xcodebuild test \
-            -project ZombiesIOS.xcodeproj \
-            -scheme ZombiesIOS \
-            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5' \
-            CODE_SIGNING_ALLOWED=NO
-
-      - name: Build iPhone 17 Pro simulator game
-        run: |
-          xcodebuild \
-            -project ZombiesIOS.xcodeproj \
-            -scheme ZombiesIOS \
-            -configuration Debug \
-            -sdk iphonesimulator \
-            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5' \
-            -derivedDataPath build/SimulatorDerivedData \
-            CODE_SIGNING_ALLOWED=NO \
-            build
-
-      - name: Launch game on iPhone 17 Pro simulator
-        shell: bash
-        run: |
-          set -euo pipefail
-          SIM_NAME='iPhone 17 Pro'
-          BUNDLE_ID='com.r347h4ck3r.zombiesios'
-          xcrun simctl boot "$SIM_NAME" 2>/dev/null || true
-          xcrun simctl bootstatus "$SIM_NAME" -b
-          APP_PATH="$(find build/SimulatorDerivedData/Build/Products/Debug-iphonesimulator -maxdepth 1 -name '*.app' -print -quit)"
-          test -n "$APP_PATH"
-          xcrun simctl install "$SIM_NAME" "$APP_PATH"
-          xcrun simctl launch "$SIM_NAME" "$BUNDLE_ID"
-          sleep 8
-          xcrun simctl io "$SIM_NAME" screenshot build/iPhone17Pro-game-smoke.png
-          test -s build/iPhone17Pro-game-smoke.png
-
-      - name: Upload simulator gameplay screenshot
-        uses: actions/upload-artifact@v4
-        with:
-          name: iPhone17Pro-game-smoke
-          path: build/iPhone17Pro-game-smoke.png
-          if-no-files-found: error
-          retention-days: 30
-
       - name: Build unsigned device app
         run: |
           xcodebuild \
@@ -134,6 +90,71 @@ jobs:
         with:
           name: ZombiesIOS-unsigned-IPA
           path: ZombiesIOS-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Detect iPhone 17 Pro simulator
+        id: simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== Available simulator devices ==='
+          xcrun simctl list devices available || true
+          UDID="$(xcrun simctl list devices available -j 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); matches=[x for arr in d.get("devices",{}).values() for x in arr if x.get("isAvailable") and x.get("name")=="iPhone 17 Pro"]; print(matches[0]["udid"] if matches else "")' || true)"
+          if [ -n "$UDID" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+            echo "Using iPhone 17 Pro simulator $UDID"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "No iPhone 17 Pro simulator runtime is installed on this runner; IPA build remains valid."
+          fi
+
+      - name: Run native cache unit tests on iPhone 17 Pro
+        if: steps.simulator.outputs.available == 'true'
+        run: |
+          xcodebuild test \
+            -project ZombiesIOS.xcodeproj \
+            -scheme ZombiesIOS \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.udid }}" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Build iPhone 17 Pro simulator game
+        if: steps.simulator.outputs.available == 'true'
+        run: |
+          xcodebuild \
+            -project ZombiesIOS.xcodeproj \
+            -scheme ZombiesIOS \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.udid }}" \
+            -derivedDataPath build/SimulatorDerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Launch game on iPhone 17 Pro simulator
+        if: steps.simulator.outputs.available == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          UDID='${{ steps.simulator.outputs.udid }}'
+          BUNDLE_ID='com.r347h4ck3r.zombiesios'
+          xcrun simctl boot "$UDID" 2>/dev/null || true
+          xcrun simctl bootstatus "$UDID" -b
+          APP_PATH="$(find build/SimulatorDerivedData/Build/Products/Debug-iphonesimulator -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$APP_PATH"
+          xcrun simctl install "$UDID" "$APP_PATH"
+          xcrun simctl launch "$UDID" "$BUNDLE_ID"
+          sleep 8
+          xcrun simctl io "$UDID" screenshot build/iPhone17Pro-game-smoke.png
+          test -s build/iPhone17Pro-game-smoke.png
+
+      - name: Upload simulator gameplay screenshot
+        if: steps.simulator.outputs.available == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: iPhone17Pro-game-smoke
+          path: build/iPhone17Pro-game-smoke.png
           if-no-files-found: error
           retention-days: 30
 
