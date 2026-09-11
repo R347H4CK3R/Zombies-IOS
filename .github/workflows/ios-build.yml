@@ -106,36 +106,25 @@ jobs:
           if scan_n != 1:
               raise SystemExit('Could not locate GfxWorld scan cap')
 
-          # PS3 serialized GfxSurface records can carry negative/sentinel values in
-          # the two vertexDataOffset fields. They are not validity criteria for the
-          # packed world vertex/index streams, so do not reject an otherwise valid
-          # srfTriangles_t solely because those values are negative.
           etext = etext.replace(
               '              vertexDataOffset0 >= 0, vertexDataOffset1 >= 0,\n',
               '',
               1,
           )
 
-          # The trailing bounds/light bytes differ across T6 platform layouts and
-          # were causing genuine PS3 surface runs to be discarded. Validate the
-          # canonical srfTriangles_t bounds/counts instead of requiring that tail.
-          etext, tail_n = re.subn(
-              r'\n        // Tail of GfxSurface is material/light indices followed by bounds\[2\]\.\n'
-              r'        let b0 = SIMD3<Float>\(beFloat\(bytes, offset \+ 56\), beFloat\(bytes, offset \+ 60\), beFloat\(bytes, offset \+ 64\)\)\n'
-              r'        let b1 = SIMD3<Float>\(beFloat\(bytes, offset \+ 68\), beFloat\(bytes, offset \+ 72\), beFloat\(bytes, offset \+ 76\)\)\n'
-              r'        guard finite\(b0\), finite\(b1\),\n'
-              r'              abs\(b0\.x\) < 4_000_000, abs\(b0\.y\) < 4_000_000, abs\(b0\.z\) < 4_000_000,\n'
-              r'              abs\(b1\.x\) < 4_000_000, abs\(b1\.y\) < 4_000_000, abs\(b1\.z\) < 4_000_000 else \{ return nil \}\n',
-              '\n',
-              etext,
-              count=1,
-          )
-          if tail_n != 1:
-              raise SystemExit('Could not relax PS3 GfxSurface tail validation')
+          # Remove platform-specific trailing GfxSurface validation. Do this by
+          # section boundaries rather than an exact regex so formatting changes
+          # cannot break the build step. This is intentionally idempotent.
+          marker = '        // Tail of GfxSurface is material/light indices followed by bounds[2].'
+          start = etext.find(marker)
+          if start >= 0:
+              end = etext.find('        return SurfaceRecord(', start)
+              if end < 0:
+                  raise SystemExit('Found GfxSurface tail block but not SurfaceRecord return')
+              etext = etext[:start] + etext[end:]
 
           # Surface arrays are 4-byte aligned in the decoded zone stream; scanning
-          # only 16-byte starts can miss the actual table. Keep the stronger
-          # triangle/bounds validation while scanning all aligned positions.
+          # only 16-byte starts can miss the actual table.
           etext = etext.replace('offset += 16', 'offset += 4')
           etext = etext.replace('private static let minimumRun = 12', 'private static let minimumRun = 6', 1)
           extractor.write_text(etext)
@@ -158,6 +147,7 @@ jobs:
           grep -q 'private static let maxScanBytes = 128 \* 1024 \* 1024' Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift
           grep -q 'private static let minimumRun = 6' Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift
           ! grep -q 'vertexDataOffset0 >= 0, vertexDataOffset1 >= 0' Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift
+          ! grep -q 'Tail of GfxSurface is material/light indices followed by bounds' Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift
           grep -q 'GFXWORLD:BE REAL' Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift
 
       - name: Install XcodeGen
