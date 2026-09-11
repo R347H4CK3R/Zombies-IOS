@@ -34,9 +34,6 @@ enum T6AssetResolver {
         return makeIndex(payload: payload, tableOffset: scanned.offset, count: scanned.count)
     }
 
-    /// Resolves a serialized pointer only when it is an actual payload-relative offset.
-    /// T6 sentinel pointers (0xffffffff/0xfffffffe) deliberately remain unresolved;
-    /// the caller can use deterministic stream-order parsing or the diagnostic fallback.
     static func payloadOffset(for record: T6AssetRecord, payloadCount: Int) -> Int? {
         let p = Int(record.rawPointer)
         guard record.rawPointer != 0xffffffff,
@@ -54,7 +51,7 @@ enum T6AssetResolver {
         for contentOffset in contentOffsets {
             guard contentOffset + 24 <= data.count else { continue }
             let count = Int(be32(data, contentOffset + 16))
-            guard count >= 8, count <= 250_000 else { continue }
+            guard count >= 1, count <= 250_000 else { continue }
             let start = contentOffset + 24
             let end = min(data.count, start + 2 * 1024 * 1024)
             let sample = min(count, 16)
