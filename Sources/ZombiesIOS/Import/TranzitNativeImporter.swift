@@ -73,10 +73,10 @@ actor TranzitNativeImporter {
 
             progress(.init(stage: .convertingMaterials, detail: "Converting \(assets.all(.material).count) materials"))
             let materialResult = T6MaterialConverter.convert(payload: payload, assets: assets)
+            let materials = materialResult.materials
 
             progress(.init(stage: .convertingTextures, detail: "Converting \(assets.all(.gfxImage).count) images"))
             let textureReport = try T6TextureConverter.convert(payload: payload, assets: assets, destination: paths.stagingTextures)
-            let materials = bindConvertedTextures(materialResult.materials, textureDirectory: paths.stagingTextures)
 
             let world = TranzitCachedWorld(
                 positions: geometry.positions,
@@ -91,7 +91,8 @@ actor TranzitNativeImporter {
             )
 
             try TranzitMeshBinary.write(world: world, to: paths.stagingMesh)
-            let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             try encoder.encode(materials).write(to: paths.stagingMaterials, options: .atomic)
 
             let warnings = geometry.warnings + materialResult.warnings + textureReport.warnings
@@ -133,8 +134,7 @@ actor TranzitNativeImporter {
             return world
         } catch {
             await cache.discardStaging()
-            // Last-known-good semantics: a failed rebuild must not make a previously
-            // converted map unusable merely because the source fingerprint changed.
+            // A failed rebuild must never destroy a previously working cache.
             if let old = try? await loadActiveWorld() {
                 progress(.init(stage: .cacheReady, detail: "REBUILD FAILED / USING PREVIOUS CACHE — \(error.localizedDescription)"))
                 return old
@@ -154,23 +154,6 @@ actor TranzitNativeImporter {
         let fastFiles = resources.filter { $0.fileName.lowercased().hasSuffix(".ff") }
         return fastFiles.first(where: { $0.fileName.lowercased() == "zm_transit.ff" })
             ?? fastFiles.max(by: { $0.byteCount < $1.byteCount })
-    }
-
-    private func bindConvertedTextures(_ materials: [TranzitCachedMaterial], textureDirectory: URL) -> [TranzitCachedMaterial] {
-        let names = ((try? FileManager.default.contentsOfDirectory(atPath: textureDirectory.path)) ?? [])
-            .filter { $0.lowercased().hasSuffix(".png") || $0.lowercased().hasSuffix(".jpg") }
-            .sorted()
-        guard !names.isEmpty else { return materials }
-        return materials.enumerated().map { index, material in
-            TranzitCachedMaterial(
-                id: material.id,
-                name: material.name,
-                diffuseTexture: material.diffuseTexture ?? names[index % names.count],
-                normalTexture: material.normalTexture,
-                specularTexture: material.specularTexture,
-                alphaCutout: material.alphaCutout
-            )
-        }
     }
 
     private func statusLine(_ manifest: TranzitCacheManifest) -> String {
