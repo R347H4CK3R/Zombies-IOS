@@ -127,9 +127,11 @@ enum T6MeshPreviewExtractor {
         var distanceSum: Float = 0
 
         for i in 1..<vertices.count {
-            minV = simd_min(minV, vertices[i])
-            maxV = simd_max(maxV, vertices[i])
-            distanceSum += simd_length(vertices[i] - vertices[i - 1])
+            let vertex = vertices[i]
+            minV = componentMin(minV, vertex)
+            maxV = componentMax(maxV, vertex)
+            let delta = vertex - vertices[i - 1]
+            distanceSum += sqrt(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z)
         }
 
         let span = maxV - minV
@@ -209,8 +211,8 @@ enum T6MeshPreviewExtractor {
         var minV = first
         var maxV = first
         for vertex in vertices.dropFirst() {
-            minV = simd_min(minV, vertex)
-            maxV = simd_max(maxV, vertex)
+            minV = componentMin(minV, vertex)
+            maxV = componentMax(maxV, vertex)
         }
 
         let center = (minV + maxV) * 0.5
@@ -219,6 +221,14 @@ enum T6MeshPreviewExtractor {
         let scale = min(1.0, 10.0 / largest)
 
         return vertices.map { ($0 - center) * scale }
+    }
+
+    private static func componentMin(_ lhs: SIMD3<Float>, _ rhs: SIMD3<Float>) -> SIMD3<Float> {
+        SIMD3<Float>(min(lhs.x, rhs.x), min(lhs.y, rhs.y), min(lhs.z, rhs.z))
+    }
+
+    private static func componentMax(_ lhs: SIMD3<Float>, _ rhs: SIMD3<Float>) -> SIMD3<Float> {
+        SIMD3<Float>(max(lhs.x, rhs.x), max(lhs.y, rhs.y), max(lhs.z, rhs.z))
     }
 
     private static func u32(_ bytes: [UInt8], _ offset: Int, _ order: ByteOrder) -> UInt32 {
