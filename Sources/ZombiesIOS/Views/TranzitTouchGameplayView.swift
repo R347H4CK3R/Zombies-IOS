@@ -253,16 +253,31 @@ struct TranzitTouchGameplayView: View {
         var best: (resource: TranzitLoadedResource, report: T6DecodedPayloadReport, assets: T6ZoneAssetProbeReport, mesh: T6RuntimeMesh?)?
         var lastError: Error?
 
-        for resource in candidates.prefix(6) {
+        // Keep the first playable pass bounded for iPhone. The expensive geometry search
+        // runs on a detached utility task so SceneKit, touch input and CADisplayLink remain responsive.
+        for resource in candidates.prefix(3) {
             do {
+                runtimeStatus = "T6 DECODING \(resource.fileName)"
+                await Task.yield()
+
                 let report = try await decoder.decodePrefix(
                     rootURL: rootURL,
                     resource: resource,
-                    maxDecodedBytes: 16 * 1024 * 1024,
-                    maxChunks: 1024
+                    maxDecodedBytes: 8 * 1024 * 1024,
+                    maxChunks: 512
                 )
-                let assets = T6ZoneAssetProbe.analyze(report.payloadPrefix)
-                let mesh = T6MeshPreviewExtractor.extract(from: report.payloadPrefix)
+
+                runtimeStatus = "T6 MESH DECODING"
+                await Task.yield()
+
+                let payload = report.payloadPrefix
+                let analysis = await Task.detached(priority: .utility) { () -> (T6ZoneAssetProbeReport, T6RuntimeMesh?) in
+                    let assets = T6ZoneAssetProbe.analyze(payload)
+                    let mesh = T6MeshPreviewExtractor.extract(from: payload, scanLimit: 6 * 1024 * 1024)
+                    return (assets, mesh)
+                }.value
+                let assets = analysis.0
+                let mesh = analysis.1
 
                 if best == nil || decodeScore(report: report, assets: assets, mesh: mesh) > decodeScore(report: best!.report, assets: best!.assets, mesh: best!.mesh) {
                     best = (resource, report, assets, mesh)
