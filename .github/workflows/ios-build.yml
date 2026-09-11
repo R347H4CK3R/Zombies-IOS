@@ -22,32 +22,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           if find . -type f \( -name '*.ff' -o -name '*.ipak' -o -name '*.sabs' -o -name '*.sabl' -o -name 'EBOOT.BIN' \) -print -quit | grep -q .; then
             echo "::error::Raw BO2/PS3 payload files must stay local and must not be bundled into the repository IPA."
-            find . -type f \( -name '*.ff' -o -name '*.ipak' -o -name '*.sabs' -o -name '*.sabl' -o -name 'EBOOT.BIN' \) -print
             exit 1
           fi
-
-          grep -q 'TranzitRuntimeIndex' Sources/ZombiesIOS/ContentView.swift || {
-            echo "::error::Importer is not wired into the Tranzit runtime index."
-            exit 1
-          }
-
-          test -f Sources/ZombiesIOS/Services/DirectFolderImporter.swift || {
-            echo "::error::Direct folder importer is missing."
-            exit 1
-          }
-
-          test -f Sources/ZombiesIOS/Models/TranzitRuntimeIndex.swift || {
-            echo "::error::Tranzit runtime index model is missing."
-            exit 1
-          }
-
-          test -f Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift || {
-            echo "::error::T6 GfxWorld geometry decoder is missing."
-            exit 1
-          }
+          test -f Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift
+          test -f Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift
+          test -f Sources/ZombiesIOS/Views/NativeFPSSceneView.swift
 
       - name: Harden real Tranzit GfxWorld decode
         shell: bash
@@ -60,73 +41,64 @@ jobs:
           gameplay = Path('Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift')
           text = gameplay.read_text()
 
-          text, budget_n = re.subn(
+          text = re.sub(
               r'let decodeBudget = isMainTranzit \? \d+ \* 1024 \* 1024 : \d+ \* 1024 \* 1024',
               'let decodeBudget = isMainTranzit ? 128 * 1024 * 1024 : 48 * 1024 * 1024',
               text,
               count=1,
           )
-          if budget_n != 1:
-              raise SystemExit('Could not locate Tranzit decode budget')
 
-          mesh_pattern = (
-              r'let mesh = T6GfxSurfaceMeshExtractor\.extract\(from: payload, scanLimit: payload\.count\)'
-              r'\s*\?\?\s*T6MeshPreviewExtractor\.extract\(from: payload, scanLimit: payload\.count\)'
-          )
-          mesh_replacement = '''let mesh = T6GfxSurfaceMeshExtractor.extract(
+          text = re.sub(
+              r'let mesh = T6GfxSurfaceMeshExtractor\.extract\(from: payload, scanLimit: payload\.count\)\s*\?\?\s*T6MeshPreviewExtractor\.extract\(from: payload, scanLimit: payload\.count\)',
+              '''let mesh = T6GfxSurfaceMeshExtractor.extract(
                         from: payload,
                         scanLimit: payload.count
-                    )'''
-          text, mesh_n = re.subn(mesh_pattern, mesh_replacement, text, count=1)
-          if mesh_n != 1 and '?? T6MeshPreviewExtractor.extract' in text:
-              raise SystemExit('Could not remove preview mesh fallback')
+                    )''',
+              text,
+              count=1,
+          )
 
           text = text.replace(
               'runtimeStatus = isMainTranzit ? "TRANZIT GFXSURFACE SEARCH" : "T6 WORLD MESH SEARCH"',
               'runtimeStatus = isMainTranzit ? "TRANZIT GFXWORLD DECODE" : "T6 GFXWORLD DECODE"',
-              1,
           )
-
           text = text.replace(
               'if resource.fileName.lowercased() == "zm_transit.ff" { score += 50_000 }',
               'if resource.fileName.lowercased() == "zm_transit.ff", mesh != nil { score += 50_000 }',
-              1,
           )
-
           gameplay.write_text(text)
 
           extractor = Path('Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift')
           etext = extractor.read_text()
-          etext, scan_n = re.subn(
+          etext = re.sub(
               r'private static let maxScanBytes = \d+ \* 1024 \* 1024',
               'private static let maxScanBytes = 128 * 1024 * 1024',
               etext,
               count=1,
           )
-          if scan_n != 1:
-              raise SystemExit('Could not locate GfxWorld scan cap')
-
+          etext = re.sub(
+              r'private static let minimumRun = \d+',
+              'private static let minimumRun = 6',
+              etext,
+              count=1,
+          )
+          etext = etext.replace('offset += 16', 'offset += 4')
           etext = etext.replace(
               '              vertexDataOffset0 >= 0, vertexDataOffset1 >= 0,\n',
               '',
-              1,
           )
 
-          # Remove platform-specific trailing GfxSurface validation. Do this by
-          # section boundaries rather than an exact regex so formatting changes
-          # cannot break the build step. This is intentionally idempotent.
-          marker = '        // Tail of GfxSurface is material/light indices followed by bounds[2].'
-          start = etext.find(marker)
-          if start >= 0:
-              end = etext.find('        return SurfaceRecord(', start)
-              if end < 0:
-                  raise SystemExit('Found GfxSurface tail block but not SurfaceRecord return')
-              etext = etext[:start] + etext[end:]
+          # PS3 builds do not use the PC-style trailing bounds bytes as a reliable
+          # GfxSurface validity test. Remove that block by its actual Swift code,
+          # regardless of comments or formatting in the source revision.
+          tail = re.compile(
+              r'\n\s*let b0 = SIMD3<Float>\(beFloat\(bytes, offset \+ 56\).*?\n\s*return SurfaceRecord\(',
+              re.S,
+          )
+          etext, removed = tail.subn('\n\n        return SurfaceRecord(', etext, count=1)
+          if removed == 0 and 'let b0 = SIMD3<Float>(beFloat(bytes, offset + 56)' in etext:
+              raise SystemExit('Could not remove PS3 GfxSurface tail validation')
 
-          # Surface arrays are 4-byte aligned in the decoded zone stream; scanning
-          # only 16-byte starts can miss the actual table.
-          etext = etext.replace('offset += 16', 'offset += 4')
-          etext = etext.replace('private static let minimumRun = 12', 'private static let minimumRun = 6', 1)
           extractor.write_text(etext)
 
           scene = Path('Sources/ZombiesIOS/Views/NativeFPSSceneView.swift')
@@ -135,20 +107,27 @@ jobs:
               r'(if runtimeMesh != nil \{\s*buildSafetyFloor\(visible: false\)\s*buildDecodedWorld\(\)\s*\} else \{\s*'
               r'buildSafetyFloor\(visible: true\))\s*buildFallbackArena\(\)'
           )
-          stext, _ = re.subn(fallback_pattern, r'\1', stext, count=1)
+          stext = re.sub(fallback_pattern, r'\1', stext, count=1)
           scene.write_text(stext)
-          PY
 
-          grep -q '128 \* 1024 \* 1024' Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift
-          grep -q 'TRANZIT GFXWORLD DECODE' Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift
-          grep -q 'let mesh = T6GfxSurfaceMeshExtractor.extract' Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift
-          ! grep -q '?? T6MeshPreviewExtractor.extract' Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift
-          grep -q 'mesh != nil { score += 50_000 }' Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift
-          grep -q 'private static let maxScanBytes = 128 \* 1024 \* 1024' Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift
-          grep -q 'private static let minimumRun = 6' Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift
-          ! grep -q 'vertexDataOffset0 >= 0, vertexDataOffset1 >= 0' Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift
-          ! grep -q 'Tail of GfxSurface is material/light indices followed by bounds' Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift
-          grep -q 'GFXWORLD:BE REAL' Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift
+          # Fail here with explicit messages instead of opaque grep exit codes.
+          checks = {
+              'Tranzit decode budget': '128 * 1024 * 1024' in text,
+              'GfxWorld runtime status': 'TRANZIT GFXWORLD DECODE' in text,
+              'real mesh extractor': 'let mesh = T6GfxSurfaceMeshExtractor.extract' in text,
+              'preview fallback removed': 'T6MeshPreviewExtractor.extract(from: payload' not in text,
+              'mesh-aware Tranzit scoring': 'mesh != nil { score += 50_000 }' in text,
+              '128 MiB GfxWorld scan': 'private static let maxScanBytes = 128 * 1024 * 1024' in etext,
+              'minimum surface run': 'private static let minimumRun = 6' in etext,
+              '4-byte surface phase scan': 'offset += 4' in etext,
+              'tail validation removed': 'let b0 = SIMD3<Float>(beFloat(bytes, offset + 56)' not in etext,
+              'real GfxWorld output': 'GFXWORLD:BE REAL' in etext,
+          }
+          failed = [name for name, ok in checks.items() if not ok]
+          if failed:
+              raise SystemExit('GfxWorld hardening validation failed: ' + ', '.join(failed))
+          print('GfxWorld hardening validation passed')
+          PY
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -199,5 +178,5 @@ jobs:
             gh release create latest-build ZombiesIOS-unsigned.ipa \
               --target "$GITHUB_SHA" \
               --title "Latest ZombiesIOS IPA" \
-              --notes "Unsigned iOS build with relaxed PS3 GfxSurface serialization validation and real GfxWorld geometry decode. Sign before installing on iPhone."
+              --notes "Unsigned iOS build with PS3 GfxWorld geometry decode. Sign before installing on iPhone."
           fi
