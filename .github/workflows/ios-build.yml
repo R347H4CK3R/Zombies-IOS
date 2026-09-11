@@ -1,11 +1,17 @@
-# Manual build only. Source commits do not automatically build an IPA.
+# Main remains manual/build-trigger only. The implementation branch runs CI on push.
 name: Build iOS IPA
 
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches:
+      - feature/tranzit-native-cache-impl
+      - main
     paths:
+      - 'Sources/**'
+      - 'Tests/**'
+      - 'project.yml'
+      - '.github/workflows/ios-build.yml'
       - '.github/build-trigger.txt'
 
 permissions:
@@ -18,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate BO2 asset boundary
+      - name: Validate BO2 asset boundary and native cache sources
         shell: bash
         run: |
           set -euo pipefail
@@ -26,114 +32,30 @@ jobs:
             echo "::error::Raw BO2/PS3 payload files must stay local and must not be bundled into the repository IPA."
             exit 1
           fi
-          test -f Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift
-          test -f Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift
+          test -f Sources/ZombiesIOS/Cache/TranzitCacheManifest.swift
+          test -f Sources/ZombiesIOS/Cache/TranzitMeshBinary.swift
+          test -f Sources/ZombiesIOS/Import/T6AssetResolver.swift
+          test -f Sources/ZombiesIOS/Import/T6WorldConverter.swift
+          test -f Sources/ZombiesIOS/Import/T6MaterialConverter.swift
+          test -f Sources/ZombiesIOS/Import/T6TextureConverter.swift
+          test -f Sources/ZombiesIOS/Import/TranzitNativeImporter.swift
+          test -f Sources/ZombiesIOS/Import/TranzitCacheValidator.swift
+          test -f Sources/ZombiesIOS/Views/TranzitNativeGameplayView.swift
           test -f Sources/ZombiesIOS/Views/NativeFPSSceneView.swift
-
-      - name: Harden real Tranzit GfxWorld decode
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-
-          gameplay = Path('Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift')
-          text = gameplay.read_text()
-
-          text = re.sub(
-              r'let decodeBudget = isMainTranzit \? \d+ \* 1024 \* 1024 : \d+ \* 1024 \* 1024',
-              'let decodeBudget = isMainTranzit ? 128 * 1024 * 1024 : 48 * 1024 * 1024',
-              text,
-              count=1,
-          )
-
-          text = re.sub(
-              r'let mesh = T6GfxSurfaceMeshExtractor\.extract\(from: payload, scanLimit: payload\.count\)\s*\?\?\s*T6MeshPreviewExtractor\.extract\(from: payload, scanLimit: payload\.count\)',
-              '''let mesh = T6GfxSurfaceMeshExtractor.extract(
-                        from: payload,
-                        scanLimit: payload.count
-                    )''',
-              text,
-              count=1,
-          )
-
-          text = text.replace(
-              'runtimeStatus = isMainTranzit ? "TRANZIT GFXSURFACE SEARCH" : "T6 WORLD MESH SEARCH"',
-              'runtimeStatus = isMainTranzit ? "TRANZIT GFXWORLD DECODE" : "T6 GFXWORLD DECODE"',
-          )
-          text = text.replace(
-              'if resource.fileName.lowercased() == "zm_transit.ff" { score += 50_000 }',
-              'if resource.fileName.lowercased() == "zm_transit.ff", mesh != nil { score += 50_000 }',
-          )
-          gameplay.write_text(text)
-
-          extractor = Path('Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift')
-          etext = extractor.read_text()
-          etext = re.sub(
-              r'private static let maxScanBytes = \d+ \* 1024 \* 1024',
-              'private static let maxScanBytes = 128 * 1024 * 1024',
-              etext,
-              count=1,
-          )
-          etext = re.sub(
-              r'private static let minimumRun = \d+',
-              'private static let minimumRun = 6',
-              etext,
-              count=1,
-          )
-          etext = etext.replace('offset += 16', 'offset += 4')
-          etext = etext.replace(
-              '              vertexDataOffset0 >= 0, vertexDataOffset1 >= 0,\n',
-              '',
-          )
-
-          # PS3 builds do not use the PC-style trailing bounds bytes as a reliable
-          # GfxSurface validity test. Remove that block by its actual Swift code,
-          # regardless of comments or formatting in the source revision.
-          tail = re.compile(
-              r'\n\s*let b0 = SIMD3<Float>\(beFloat\(bytes, offset \+ 56\).*?\n\s*return SurfaceRecord\(',
-              re.S,
-          )
-          etext, removed = tail.subn('\n\n        return SurfaceRecord(', etext, count=1)
-          if removed == 0 and 'let b0 = SIMD3<Float>(beFloat(bytes, offset + 56)' in etext:
-              raise SystemExit('Could not remove PS3 GfxSurface tail validation')
-
-          extractor.write_text(etext)
-
-          scene = Path('Sources/ZombiesIOS/Views/NativeFPSSceneView.swift')
-          stext = scene.read_text()
-          fallback_pattern = (
-              r'(if runtimeMesh != nil \{\s*buildSafetyFloor\(visible: false\)\s*buildDecodedWorld\(\)\s*\} else \{\s*'
-              r'buildSafetyFloor\(visible: true\))\s*buildFallbackArena\(\)'
-          )
-          stext = re.sub(fallback_pattern, r'\1', stext, count=1)
-          scene.write_text(stext)
-
-          # Fail here with explicit messages instead of opaque grep exit codes.
-          checks = {
-              'Tranzit decode budget': '128 * 1024 * 1024' in text,
-              'GfxWorld runtime status': 'TRANZIT GFXWORLD DECODE' in text,
-              'real mesh extractor': 'let mesh = T6GfxSurfaceMeshExtractor.extract' in text,
-              'preview fallback removed': 'T6MeshPreviewExtractor.extract(from: payload' not in text,
-              'mesh-aware Tranzit scoring': 'mesh != nil { score += 50_000 }' in text,
-              '128 MiB GfxWorld scan': 'private static let maxScanBytes = 128 * 1024 * 1024' in etext,
-              'minimum surface run': 'private static let minimumRun = 6' in etext,
-              '4-byte surface phase scan': 'offset += 4' in etext,
-              'tail validation removed': 'let b0 = SIMD3<Float>(beFloat(bytes, offset + 56)' not in etext,
-              'real GfxWorld output': 'GFXWORLD:BE REAL' in etext,
-          }
-          failed = [name for name, ok in checks.items() if not ok]
-          if failed:
-              raise SystemExit('GfxWorld hardening validation failed: ' + ', '.join(failed))
-          print('GfxWorld hardening validation passed')
-          PY
 
       - name: Install XcodeGen
         run: brew install xcodegen
 
       - name: Generate Xcode project
         run: xcodegen generate
+
+      - name: Run native cache unit tests
+        run: |
+          xcodebuild test \
+            -project ZombiesIOS.xcodeproj \
+            -scheme ZombiesIOS \
+            -destination 'platform=iOS Simulator,name=iPhone 16 Pro,OS=latest' \
+            CODE_SIGNING_ALLOWED=NO
 
       - name: Build unsigned device app
         run: |
@@ -148,6 +70,17 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             build
+
+      - name: Verify raw BO2 payloads are absent from app bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find build/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$APP_PATH"
+          if find "$APP_PATH" -type f \( -name '*.ff' -o -name '*.ipak' -o -name '*.sabs' -o -name '*.sabl' -o -name 'EBOOT.BIN' \) -print -quit | grep -q .; then
+            echo "::error::Raw BO2 payload leaked into the app bundle."
+            exit 1
+          fi
 
       - name: Package IPA
         run: |
@@ -169,6 +102,7 @@ jobs:
           retention-days: 30
 
       - name: Create or update latest-build release
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -178,5 +112,5 @@ jobs:
             gh release create latest-build ZombiesIOS-unsigned.ipa \
               --target "$GITHUB_SHA" \
               --title "Latest ZombiesIOS IPA" \
-              --notes "Unsigned iOS build with PS3 GfxWorld geometry decode. Sign before installing on iPhone."
+              --notes "Unsigned iOS build with staged native Tranzit cache conversion. Sign before installing on iPhone."
           fi
