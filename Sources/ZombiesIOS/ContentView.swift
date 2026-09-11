@@ -63,8 +63,8 @@ struct ContentView: View {
                             LabeledContent("Loaded areas", value: "\(runtimeSession.areas.count)")
                             LabeledContent("Validated bytes", value: ByteCountFormatter.string(fromByteCount: runtimeSession.totalLoadedBytes, countStyle: .file))
                             LabeledContent("Folder stream", value: activeScopedAccess ? "Active" : "Unavailable")
-                            NavigationLink("Open Touch Runtime") {
-                                TranzitTouchGameplayView(
+                            NavigationLink("Open Native Touch Runtime") {
+                                TranzitNativeGameplayView(
                                     loadedArea: loadedArea,
                                     rootURL: runtimeSession.rootURL,
                                     sharedContainers: runtimeSession.sharedContainers,
@@ -105,40 +105,29 @@ struct ContentView: View {
                     showImportDialog(kind: .failure, title: "File Selection Failed", message: error.localizedDescription)
                 }
             }
-            .onOpenURL { url in
-                handleIncomingURL(url)
-            }
+            .onOpenURL { url in handleIncomingURL(url) }
             .alert(importDialogTitle, isPresented: $showingImportDialog) { Button("OK", role: .cancel) { } } message: { Text(importDialogMessage) }
             .task { restoreRememberedFolderName() }
         }
     }
 
     private func showImportDialog(kind: ImportDialogKind, title: String, message: String) {
-        importDialogKind = kind
-        importDialogTitle = title
-        importDialogMessage = message
-        showingImportDialog = true
+        importDialogKind = kind; importDialogTitle = title; importDialogMessage = message; showingImportDialog = true
     }
 
-    private func handleSelectedFolder(_ url: URL) {
-        remember(folder: url)
-        beginFolderImport(url)
-    }
+    private func handleSelectedFolder(_ url: URL) { remember(folder: url); beginFolderImport(url) }
 
     private func handleIncomingURL(_ url: URL) {
         let accessed = url.startAccessingSecurityScopedResource()
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-
         var isDirectory: ObjCBool = false
         let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
         guard exists else {
             showImportDialog(kind: .failure, title: "Shared Item Unavailable", message: "ZombiesIOS received the item, but iOS did not provide a readable file or folder URL.")
             return
         }
-
         let folderURL = isDirectory.boolValue ? url : url.deletingLastPathComponent()
-        remember(folder: folderURL)
-        beginFolderImport(folderURL)
+        remember(folder: folderURL); beginFolderImport(folderURL)
     }
 
     private func remember(folder url: URL) {
@@ -146,9 +135,7 @@ struct ContentView: View {
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
         do {
             let data = try url.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
-            UserDefaults.standard.set(data, forKey: bookmarkKey)
-            rememberedFolderName = url.lastPathComponent
-            errorMessage = nil
+            UserDefaults.standard.set(data, forKey: bookmarkKey); rememberedFolderName = url.lastPathComponent; errorMessage = nil
         } catch {
             errorMessage = "The folder can be used now, but iOS could not save it for the next launch: \(error.localizedDescription)"
         }
@@ -165,9 +152,7 @@ struct ContentView: View {
                 defer { if accessed { url.stopAccessingSecurityScopedResource() } }
                 UserDefaults.standard.set(try url.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil), forKey: bookmarkKey)
             }
-        } catch {
-            clearRememberedFolder(message: "The saved folder could not be reopened. Choose the BO2 folder again once.")
-        }
+        } catch { clearRememberedFolder(message: "The saved folder could not be reopened. Choose the BO2 folder again once.") }
     }
 
     @discardableResult private func openRememberedFolder() -> Bool {
@@ -180,9 +165,7 @@ struct ContentView: View {
                 defer { if accessed { url.stopAccessingSecurityScopedResource() } }
                 UserDefaults.standard.set(try url.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil), forKey: bookmarkKey)
             }
-            rememberedFolderName = url.lastPathComponent
-            beginFolderImport(url)
-            return true
+            rememberedFolderName = url.lastPathComponent; beginFolderImport(url); return true
         } catch {
             clearRememberedFolder(message: "The saved folder could not be reopened. Choose it again once.")
             showImportDialog(kind: .failure, title: "Saved Folder Unavailable", message: "The saved BO2 folder could not be reopened. Choose it again once.")
@@ -191,35 +174,20 @@ struct ContentView: View {
     }
 
     private func clearRememberedFolder(message: String) {
-        releaseActiveFolderAccess()
-        UserDefaults.standard.removeObject(forKey: bookmarkKey)
-        rememberedFolderName = nil
-        statusMessage = message
+        releaseActiveFolderAccess(); UserDefaults.standard.removeObject(forKey: bookmarkKey); rememberedFolderName = nil; statusMessage = message
     }
 
     private func releaseActiveFolderAccess() {
-        if activeScopedAccess, let activeScopedURL {
-            activeScopedURL.stopAccessingSecurityScopedResource()
-        }
-        activeScopedURL = nil
-        activeScopedAccess = false
+        if activeScopedAccess, let activeScopedURL { activeScopedURL.stopAccessingSecurityScopedResource() }
+        activeScopedURL = nil; activeScopedAccess = false
     }
 
     private func beginFolderImport(_ folderURL: URL) {
-        releaseActiveFolderAccess()
-
-        scanning = true
-        errorMessage = nil
-        report = nil
-        runtimeIndex = nil
-        runtimeSession = nil
+        releaseActiveFolderAccess(); scanning = true; errorMessage = nil; report = nil; runtimeIndex = nil; runtimeSession = nil
         statusMessage = "Reading BO2 runtime files directly from the selected folder…"
         showImportDialog(kind: .loading, title: "Loading BO2 Files", message: "Reading \(folderURL.lastPathComponent) in place. The game folder will not be copied into ZombiesIOS app storage.")
 
-        let accessed = folderURL.startAccessingSecurityScopedResource()
-        activeScopedURL = accessed ? folderURL : nil
-        activeScopedAccess = accessed
-
+        let accessed = folderURL.startAccessingSecurityScopedResource(); activeScopedURL = accessed ? folderURL : nil; activeScopedAccess = accessed
         Task {
             do {
                 guard FileManager.default.fileExists(atPath: folderURL.path) else { throw DirectFolderImporter.ImportError.cannotAccessFolder }
@@ -228,19 +196,14 @@ struct ContentView: View {
                 let index = TranzitRuntimeIndex(report: result.report)
                 let session = try await runtimeLoader.loadCurrent(report: result.report, rootURL: sourceRoot)
                 await MainActor.run {
-                    report = result.report
-                    runtimeIndex = index
-                    runtimeSession = session
-                    scanning = false
+                    report = result.report; runtimeIndex = index; runtimeSession = session; scanning = false
                     let target = index.firstPlayableArea?.displayName ?? "none"
-                    statusMessage = "Tranzit runtime is attached to the remembered folder. First playable target: \(target)."
-                    showImportDialog(kind: .success, title: "BO2 Load Complete", message: "Found \(result.report.totalFiles) BO2 files and attached the smallest Tranzit area directly to the selected folder. Folder access remains active for runtime streaming. No game files were copied into app storage. First playable target: \(target).")
+                    statusMessage = "Tranzit runtime is attached to the remembered folder. Native cache conversion will run automatically when needed. Spawn target: \(target)."
+                    showImportDialog(kind: .success, title: "BO2 Load Complete", message: "Found \(result.report.totalFiles) BO2 files. Native Tranzit conversion will use the selected folder in place and store only converted cache data inside ZombiesIOS. No game files were copied into app storage.")
                 }
             } catch {
                 await MainActor.run {
-                    releaseActiveFolderAccess()
-                    scanning = false
-                    errorMessage = "BO2 load failed: \(error.localizedDescription)"
+                    releaseActiveFolderAccess(); scanning = false; errorMessage = "BO2 load failed: \(error.localizedDescription)"
                     statusMessage = "Folder access failed. Choose PS3_GAME, USRDIR, english, or use Choose BO2 File Instead."
                     showImportDialog(kind: .failure, title: "BO2 Load Failed", message: "\(error.localizedDescription)\n\nTry selecting PS3_GAME, USRDIR, english, or choose a BO2 file instead.")
                 }
