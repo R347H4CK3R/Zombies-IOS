@@ -38,3 +38,13 @@ targets:
       - Tests/ZombiesIOSTests
     dependencies:
       - target: ZombiesIOS
+
+schemes:
+  ZombiesIOS:
+    build:
+      targets:
+        ZombiesIOS: all
+        ZombiesIOSTests: [test]
+    test:
+      targets:
+        - ZombiesIOSTests
