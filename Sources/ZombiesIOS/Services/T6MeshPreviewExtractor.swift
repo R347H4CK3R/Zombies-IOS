@@ -43,59 +43,34 @@ enum T6MeshPreviewExtractor {
         let index: IndexCandidate
     }
 
-    /// Heuristic reconstruction for decoded T6/PS3 XModel surface payloads.
-    ///
-    /// The previous preview pass assumed vertex and index data used the same byte order
-    /// and that every index buffer started at vertex zero. Both assumptions are too
-    /// strict for serialized PS3 zone data. This pass independently tests index endian,
-    /// supports non-zero base vertex ranges, searches a wider set of T6-era strides,
-    /// and rejects weak/random triangle runs before handing geometry to SceneKit.
-    static func extract(from data: Data, scanLimit: Int = 16 * 1024 * 1024) -> T6RuntimeMesh? {
+    static func extract(from data: Data, scanLimit: Int = 24 * 1024 * 1024) -> T6RuntimeMesh? {
         guard data.count >= 4096 else { return nil }
 
         let limit = max(4096, min(scanLimit, data.count))
         let bytes = Array(data.prefix(limit))
-        let strides = [12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64]
-        let positionOffsets = [0, 4, 8, 12, 16, 20, 24]
+        let strides = [12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 68, 72, 80, 96]
+        let positionOffsets = Array(stride(from: 0, through: 32, by: 4))
 
         var vertexCandidates: [VertexCandidate] = []
-        vertexCandidates.reserveCapacity(48)
+        vertexCandidates.reserveCapacity(96)
 
-        // PS3 data is normally big-endian, so score it first. Little-endian remains a
-        // fallback because decoded blocks can contain CPU-side and packed substreams.
         for order in ByteOrder.allCases {
             for stride in strides {
-                guard bytes.count > stride * 32 else { continue }
+                guard bytes.count > stride * 48 else { continue }
                 for positionOffset in positionOffsets where positionOffset + 12 <= stride {
-                    let last = bytes.count - stride * 24 - positionOffset - 12
+                    let last = bytes.count - stride * 32 - positionOffset - 12
                     guard last > 0 else { continue }
 
-                    // Four-byte alignment is important for float3 positions. Sampling at
-                    // 32-byte intervals keeps the full 16 MB pass reasonable on iPhone.
                     var offset = 0
                     while offset <= last {
-                        if let sample = sampleVertices(
-                            bytes,
-                            offset: offset,
-                            stride: stride,
-                            positionOffset: positionOffset,
-                            order: order,
-                            count: 24
-                        ) {
+                        if let sample = sampleVertices(bytes, offset: offset, stride: stride, positionOffset: positionOffset, order: order, count: 32) {
                             let score = vertexScore(sample)
                             if score > 0 {
-                                let vertices = collectVertices(
-                                    bytes,
-                                    offset: offset,
-                                    stride: stride,
-                                    positionOffset: positionOffset,
-                                    order: order,
-                                    maxCount: 4096
-                                )
-                                if vertices.count >= 32 {
+                                let vertices = collectVertices(bytes, offset: offset, stride: stride, positionOffset: positionOffset, order: order, maxCount: 12_000)
+                                if vertices.count >= 48 {
                                     insertVertex(
                                         VertexCandidate(
-                                            score: score + min(Float(vertices.count), 1500) * 0.08,
+                                            score: score + min(Float(vertices.count), 6_000) * 0.12,
                                             offset: offset,
                                             stride: stride,
                                             positionOffset: positionOffset,
@@ -103,20 +78,18 @@ enum T6MeshPreviewExtractor {
                                             vertices: vertices
                                         ),
                                         into: &vertexCandidates,
-                                        limit: 48
+                                        limit: 96
                                     )
                                 }
                             }
                         }
-                        offset += 32
+                        offset += 16
                     }
                 }
             }
 
-            // If PS3-endian produced several strong candidates, do not spend another
-            // large pass on LE data unless necessary.
-            if order == .big, vertexCandidates.count >= 12,
-               vertexCandidates.prefix(6).allSatisfy({ $0.score > 420 }) {
+            if order == .big, vertexCandidates.count >= 24,
+               vertexCandidates.prefix(8).allSatisfy({ $0.score > 500 }) {
                 break
             }
         }
@@ -124,14 +97,12 @@ enum T6MeshPreviewExtractor {
         guard !vertexCandidates.isEmpty else { return nil }
 
         var best: MeshCandidate?
-
         for vertex in vertexCandidates {
             let vertexBytesStart = vertex.offset
             let vertexBytesEnd = min(bytes.count, vertex.offset + vertex.stride * vertex.vertices.count)
-            let searchStart = max(0, vertexBytesStart - 1024 * 1024)
-            let searchEnd = min(bytes.count, vertexBytesEnd + 1024 * 1024)
+            let searchStart = max(0, vertexBytesStart - 3 * 1024 * 1024)
+            let searchEnd = min(bytes.count, vertexBytesEnd + 3 * 1024 * 1024)
 
-            // Index data is tested independently for BE/LE and with a movable base index.
             for indexOrder in ByteOrder.allCases {
                 guard let index = findBestIndices(
                     bytes,
@@ -143,9 +114,11 @@ enum T6MeshPreviewExtractor {
                     order: indexOrder
                 ) else { continue }
 
-                let endianBonus: Float = vertex.order == .big ? 80 : 0
-                let matchingEndianBonus: Float = vertex.order == index.order ? 25 : 0
-                let combined = vertex.score + index.score + endianBonus + matchingEndianBonus
+                let endianBonus: Float = vertex.order == .big ? 120 : 0
+                let matchingEndianBonus: Float = vertex.order == index.order ? 40 : 0
+                let topologyBonus = min(Float(index.indices.count / 3), 8_000) * 1.4
+                let vertexBonus = min(Float(vertex.vertices.count), 8_000) * 0.30
+                let combined = vertex.score + index.score + endianBonus + matchingEndianBonus + topologyBonus + vertexBonus
                 let candidate = MeshCandidate(score: combined, vertex: vertex, index: index)
                 if best == nil || candidate.score > best!.score {
                     best = candidate
@@ -154,32 +127,26 @@ enum T6MeshPreviewExtractor {
         }
 
         guard let best else { return nil }
-
         let safeVertexCount = min(best.vertex.vertices.count, Int(UInt16.max))
         let safeVertices = Array(best.vertex.vertices.prefix(safeVertexCount))
         let sanitized = sanitizeTriangles(best.index.indices, vertices: safeVertices)
+        guard sanitized.count >= 270 else { return nil }
 
-        // Tiny random runs were responsible for several primitive-looking false positives.
-        // Require enough coherent surface topology to be visually useful.
-        guard sanitized.count >= 144 else { return nil } // 48 triangles
-
+        let worldVertices = normalizeForSceneKit(safeVertices)
         return T6RuntimeMesh(
-            vertices: normalize(safeVertices),
+            vertices: worldVertices,
             indices: sanitized,
             vertexStride: best.vertex.stride,
             vertexOffset: best.vertex.offset,
             positionOffset: best.vertex.positionOffset,
             indexOffset: best.index.offset,
-            byteOrder: "V:\(best.vertex.order.label) I:\(best.index.order.label) B:\(best.index.baseIndex)"
+            byteOrder: "V:\(best.vertex.order.label) I:\(best.index.order.label) B:\(best.index.baseIndex) ZUP"
         )
     }
 
     private static func insertVertex(_ candidate: VertexCandidate, into list: inout [VertexCandidate], limit: Int) {
         if let i = list.firstIndex(where: {
-            $0.offset == candidate.offset &&
-            $0.stride == candidate.stride &&
-            $0.positionOffset == candidate.positionOffset &&
-            $0.order == candidate.order
+            $0.offset == candidate.offset && $0.stride == candidate.stride && $0.positionOffset == candidate.positionOffset && $0.order == candidate.order
         }) {
             if candidate.score > list[i].score { list[i] = candidate }
         } else {
@@ -189,14 +156,7 @@ enum T6MeshPreviewExtractor {
         if list.count > limit { list.removeLast(list.count - limit) }
     }
 
-    private static func sampleVertices(
-        _ bytes: [UInt8],
-        offset: Int,
-        stride: Int,
-        positionOffset: Int,
-        order: ByteOrder,
-        count: Int
-    ) -> [SIMD3<Float>]? {
+    private static func sampleVertices(_ bytes: [UInt8], offset: Int, stride: Int, positionOffset: Int, order: ByteOrder, count: Int) -> [SIMD3<Float>]? {
         var result: [SIMD3<Float>] = []
         result.reserveCapacity(count)
         for i in 0..<count {
@@ -209,14 +169,7 @@ enum T6MeshPreviewExtractor {
         return result
     }
 
-    private static func collectVertices(
-        _ bytes: [UInt8],
-        offset: Int,
-        stride: Int,
-        positionOffset: Int,
-        order: ByteOrder,
-        maxCount: Int
-    ) -> [SIMD3<Float>] {
+    private static func collectVertices(_ bytes: [UInt8], offset: Int, stride: Int, positionOffset: Int, order: ByteOrder, maxCount: Int) -> [SIMD3<Float>] {
         var result: [SIMD3<Float>] = []
         result.reserveCapacity(maxCount)
         var invalidRun = 0
@@ -229,18 +182,18 @@ enum T6MeshPreviewExtractor {
                 invalidRun = 0
             } else {
                 invalidRun += 1
-                if invalidRun >= 2 { break }
+                if invalidRun >= 3 { break }
             }
         }
         return result
     }
 
     private static func vertexScore(_ vertices: [SIMD3<Float>]) -> Float {
-        guard vertices.count >= 20 else { return -1 }
+        guard vertices.count >= 24 else { return -1 }
         let bounds = boundsFor(vertices)
         let span = bounds.max - bounds.min
         let extent = max(span.x, max(span.y, span.z))
-        guard extent > 0.001, extent < 1_000_000 else { return -1 }
+        guard extent > 0.001, extent < 2_000_000 else { return -1 }
 
         let activeAxes = [span.x, span.y, span.z].filter { $0 > max(0.0001, extent * 0.0001) }.count
         guard activeAxes >= 2 else { return -1 }
@@ -252,55 +205,43 @@ enum T6MeshPreviewExtractor {
             let d = distance(vertices[i], vertices[i - 1])
             stepTotal += d
             if d < extent * 0.00001 { repeated += 1 }
-            if d > extent * 0.90 { hugeSteps += 1 }
+            if d > extent * 0.92 { hugeSteps += 1 }
         }
 
-        guard repeated < vertices.count / 3,
-              hugeSteps < vertices.count / 3 else { return -1 }
-
+        guard repeated < vertices.count / 3, hugeSteps < vertices.count / 3 else { return -1 }
         let averageStep = stepTotal / Float(max(1, vertices.count - 1))
-        guard averageStep > 0.000001, averageStep < extent * 0.75 else { return -1 }
+        guard averageStep > 0.000001, averageStep < extent * 0.80 else { return -1 }
 
         let sortedSpans = [span.x, span.y, span.z].sorted()
         let secondAxisRatio = sortedSpans[1] / max(0.0001, sortedSpans[2])
         let smallestAxisRatio = sortedSpans[0] / max(0.0001, sortedSpans[2])
 
-        // Real meshes can be planar, but random byte reinterpretation often has one axis
-        // completely unrelated to the other two. Reward coherent 2D/3D bounds.
-        return Float(activeAxes) * 90
-            + min(220, secondAxisRatio * 220)
-            + min(80, smallestAxisRatio * 80)
-            - min(120, averageStep / extent * 160)
+        return Float(activeAxes) * 100
+            + min(240, secondAxisRatio * 240)
+            + min(100, smallestAxisRatio * 100)
+            - min(140, averageStep / extent * 180)
     }
 
-    private static func findBestIndices(
-        _ bytes: [UInt8],
-        start: Int,
-        end: Int,
-        excludingStart: Int,
-        excludingEnd: Int,
-        vertices: [SIMD3<Float>],
-        order: ByteOrder
-    ) -> IndexCandidate? {
-        guard vertices.count >= 32, start < end else { return nil }
+    private static func findBestIndices(_ bytes: [UInt8], start: Int, end: Int, excludingStart: Int, excludingEnd: Int, vertices: [SIMD3<Float>], order: ByteOrder) -> IndexCandidate? {
+        guard vertices.count >= 48, start < end else { return nil }
         let upper = min(end, bytes.count)
         var best: IndexCandidate?
         var offset = start + (start & 1)
 
-        while offset + 96 <= upper {
+        while offset + 180 <= upper {
             if offset >= excludingStart && offset < excludingEnd {
                 offset = excludingEnd + (excludingEnd & 1)
                 continue
             }
 
             var raw: [UInt16] = []
-            raw.reserveCapacity(6144)
+            raw.reserveCapacity(24_000)
             var cursor = offset
             var minIndex = UInt16.max
             var maxIndex: UInt16 = 0
             var bad = 0
 
-            while cursor + 2 <= upper && raw.count < 6144 {
+            while cursor + 2 <= upper && raw.count < 24_000 {
                 if cursor >= excludingStart && cursor < excludingEnd { break }
                 let value = u16(bytes, cursor, order)
                 raw.append(value)
@@ -308,39 +249,27 @@ enum T6MeshPreviewExtractor {
                 maxIndex = max(maxIndex, value)
                 cursor += 2
 
-                if raw.count >= 48 {
+                if raw.count >= 96 {
                     let range = Int(maxIndex) - Int(minIndex)
                     if range >= vertices.count {
                         bad += 1
-                        if bad >= 3 { break }
+                        if bad >= 4 { break }
                     } else {
                         bad = 0
                     }
                 }
             }
 
-            if raw.count >= 144,
-               minIndex != UInt16.max,
-               Int(maxIndex) - Int(minIndex) < vertices.count {
-                var rebased: [UInt16] = []
-                rebased.reserveCapacity(raw.count - raw.count % 3)
+            if raw.count >= 270, minIndex != UInt16.max, Int(maxIndex) - Int(minIndex) < vertices.count {
                 let count = raw.count - raw.count % 3
-                for value in raw.prefix(count) {
-                    rebased.append(value &- minIndex)
-                }
+                var rebased: [UInt16] = []
+                rebased.reserveCapacity(count)
+                for value in raw.prefix(count) { rebased.append(value &- minIndex) }
 
                 let score = triangleScore(rebased, vertices: vertices)
                 if score > 0 {
-                    let candidate = IndexCandidate(
-                        score: score,
-                        offset: offset,
-                        order: order,
-                        baseIndex: minIndex,
-                        indices: rebased
-                    )
-                    if best == nil || candidate.score > best!.score {
-                        best = candidate
-                    }
+                    let candidate = IndexCandidate(score: score, offset: offset, order: order, baseIndex: minIndex, indices: rebased)
+                    if best == nil || candidate.score > best!.score { best = candidate }
                 }
             }
 
@@ -350,7 +279,7 @@ enum T6MeshPreviewExtractor {
     }
 
     private static func triangleScore(_ indices: [UInt16], vertices: [SIMD3<Float>]) -> Float {
-        guard indices.count >= 144 else { return -1 }
+        guard indices.count >= 270 else { return -1 }
         let bounds = boundsFor(vertices)
         let span = bounds.max - bounds.min
         let extent = max(Float(0.0001), max(span.x, max(span.y, span.z)))
@@ -364,29 +293,19 @@ enum T6MeshPreviewExtractor {
 
         var i = 0
         while i + 2 < indices.count {
-            let ia = indices[i]
-            let ib = indices[i + 1]
-            let ic = indices[i + 2]
+            let ia = indices[i], ib = indices[i + 1], ic = indices[i + 2]
             i += 3
-
             guard ia != ib, ib != ic, ia != ic,
-                  Int(ia) < vertices.count,
-                  Int(ib) < vertices.count,
-                  Int(ic) < vertices.count else {
+                  Int(ia) < vertices.count, Int(ib) < vertices.count, Int(ic) < vertices.count else {
                 rejected += 1
                 continue
             }
 
-            let a = vertices[Int(ia)]
-            let b = vertices[Int(ib)]
-            let c = vertices[Int(ic)]
-            let ab = distance(a, b)
-            let bc = distance(b, c)
-            let ca = distance(c, a)
+            let a = vertices[Int(ia)], b = vertices[Int(ib)], c = vertices[Int(ic)]
+            let ab = distance(a, b), bc = distance(b, c), ca = distance(c, a)
             let longest = max(ab, max(bc, ca))
             let area2 = length(cross(b - a, c - a))
-
-            if area2 <= extent * extent * 0.00000001 || longest > extent * 0.80 {
+            if area2 <= extent * extent * 0.000000005 || longest > extent * 0.85 {
                 rejected += 1
                 continue
             }
@@ -394,35 +313,28 @@ enum T6MeshPreviewExtractor {
             valid += 1
             normalizedEdgeTotal += (ab + bc + ca) / (3 * extent)
             used.insert(ia); used.insert(ib); used.insert(ic)
-
             for (u, v) in [(ia, ib), (ib, ic), (ic, ia)] {
-                let lo = min(u, v)
-                let hi = max(u, v)
+                let lo = min(u, v), hi = max(u, v)
                 let key = (UInt64(lo) << 32) | UInt64(hi)
                 if !edges.insert(key).inserted { sharedEdges += 1 }
             }
         }
 
-        guard valid >= 48 else { return -1 }
+        guard valid >= 90 else { return -1 }
         let validity = Float(valid) / Float(max(1, valid + rejected))
-        guard validity >= 0.72 else { return -1 }
-
+        guard validity >= 0.70 else { return -1 }
         let usage = Float(used.count) / Float(max(1, vertices.count))
-        guard used.count >= 24, usage >= 0.03 else { return -1 }
-
+        guard used.count >= 36, usage >= 0.02 else { return -1 }
         let averageEdge = normalizedEdgeTotal / Float(valid)
-        guard averageEdge < 0.32 else { return -1 }
-
+        guard averageEdge < 0.36 else { return -1 }
         let sharedRatio = Float(sharedEdges) / Float(max(1, valid * 3))
-        // Connected indexed surfaces should reuse edges. This strongly suppresses random
-        // integer runs that merely happen to stay inside the vertex range.
-        guard sharedRatio >= 0.05 else { return -1 }
+        guard sharedRatio >= 0.04 else { return -1 }
 
-        return Float(valid) * 3.5
-            + validity * 500
-            + min(usage, 0.85) * 350
-            + min(sharedRatio, 0.65) * 500
-            - averageEdge * 180
+        return Float(valid) * 5.0
+            + validity * 650
+            + min(usage, 0.90) * 420
+            + min(sharedRatio, 0.70) * 650
+            - averageEdge * 220
     }
 
     private static func sanitizeTriangles(_ indices: [UInt16], vertices: [SIMD3<Float>]) -> [UInt16] {
@@ -435,47 +347,44 @@ enum T6MeshPreviewExtractor {
 
         var i = 0
         while i + 2 < indices.count {
-            let ia = indices[i]
-            let ib = indices[i + 1]
-            let ic = indices[i + 2]
+            let ia = indices[i], ib = indices[i + 1], ic = indices[i + 2]
             i += 3
-
             guard ia != ib, ib != ic, ia != ic,
-                  Int(ia) < vertices.count,
-                  Int(ib) < vertices.count,
-                  Int(ic) < vertices.count else { continue }
-
-            let a = vertices[Int(ia)]
-            let b = vertices[Int(ib)]
-            let c = vertices[Int(ic)]
+                  Int(ia) < vertices.count, Int(ib) < vertices.count, Int(ic) < vertices.count else { continue }
+            let a = vertices[Int(ia)], b = vertices[Int(ib)], c = vertices[Int(ic)]
             let longest = max(distance(a, b), max(distance(b, c), distance(c, a)))
             let area2 = length(cross(b - a, c - a))
-            guard area2 > extent * extent * 0.00000001,
-                  longest <= extent * 0.80 else { continue }
-
-            result.append(ia)
-            result.append(ib)
-            result.append(ic)
+            guard area2 > extent * extent * 0.000000005, longest <= extent * 0.85 else { continue }
+            result.append(ia); result.append(ib); result.append(ic)
         }
         return result
     }
 
-    private static func normalize(_ vertices: [SIMD3<Float>]) -> [SIMD3<Float>] {
+    private static func normalizeForSceneKit(_ vertices: [SIMD3<Float>]) -> [SIMD3<Float>] {
         guard !vertices.isEmpty else { return vertices }
-        let bounds = boundsFor(vertices)
-        let center = (bounds.min + bounds.max) * 0.5
+
+        // T6/Call of Duty world coordinates are Z-up. SceneKit is Y-up.
+        let converted = vertices.map { SIMD3<Float>($0.x, $0.z, -$0.y) }
+        let bounds = boundsFor(converted)
         let span = bounds.max - bounds.min
         let largest = max(Float(0.0001), max(span.x, max(span.y, span.z)))
+        let scale = 42.0 / largest
+        let centerX = (bounds.min.x + bounds.max.x) * 0.5
+        let centerZ = (bounds.min.z + bounds.max.z) * 0.5
+        let groundY = bounds.min.y
 
-        // Normalize both oversized and tiny decoded meshes so the selected XModel is
-        // always visible at a stable preview scale in front of the player.
-        let scale = 10.0 / largest
-        return vertices.map { ($0 - center) * scale }
+        return converted.map {
+            SIMD3<Float>(
+                ($0.x - centerX) * scale,
+                ($0.y - groundY) * scale,
+                ($0.z - centerZ) * scale
+            )
+        }
     }
 
     private static func plausible(_ value: SIMD3<Float>) -> Bool {
         guard value.x.isFinite, value.y.isFinite, value.z.isFinite else { return false }
-        let limit: Float = 1_000_000
+        let limit: Float = 2_000_000
         guard abs(value.x) <= limit, abs(value.y) <= limit, abs(value.z) <= limit else { return false }
         return abs(value.x) + abs(value.y) + abs(value.z) > 0.000001
     }
@@ -492,58 +401,32 @@ enum T6MeshPreviewExtractor {
     private static func boundsFor(_ vertices: [SIMD3<Float>]) -> (min: SIMD3<Float>, max: SIMD3<Float>) {
         var minV = vertices[0]
         var maxV = vertices[0]
-        for vertex in vertices.dropFirst() {
-            minV = SIMD3<Float>(
-                min(minV.x, vertex.x),
-                min(minV.y, vertex.y),
-                min(minV.z, vertex.z)
-            )
-            maxV = SIMD3<Float>(
-                max(maxV.x, vertex.x),
-                max(maxV.y, vertex.y),
-                max(maxV.z, vertex.z)
-            )
+        for v in vertices.dropFirst() {
+            minV = SIMD3<Float>(min(minV.x, v.x), min(minV.y, v.y), min(minV.z, v.z))
+            maxV = SIMD3<Float>(max(maxV.x, v.x), max(maxV.y, v.y), max(maxV.z, v.z))
         }
         return (minV, maxV)
     }
 
-    private static func distance(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> Float {
-        length(a - b)
-    }
-
-    private static func length(_ v: SIMD3<Float>) -> Float {
-        sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
-    }
-
+    private static func distance(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> Float { length(a - b) }
+    private static func length(_ v: SIMD3<Float>) -> Float { sqrt(v.x * v.x + v.y * v.y + v.z * v.z) }
     private static func cross(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> SIMD3<Float> {
-        SIMD3<Float>(
-            a.y * b.z - a.z * b.y,
-            a.z * b.x - a.x * b.z,
-            a.x * b.y - a.y * b.x
-        )
+        SIMD3<Float>(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x)
     }
 
     private static func u32(_ bytes: [UInt8], _ offset: Int, _ order: ByteOrder) -> UInt32 {
         switch order {
         case .big:
-            return (UInt32(bytes[offset]) << 24)
-                | (UInt32(bytes[offset + 1]) << 16)
-                | (UInt32(bytes[offset + 2]) << 8)
-                | UInt32(bytes[offset + 3])
+            return (UInt32(bytes[offset]) << 24) | (UInt32(bytes[offset + 1]) << 16) | (UInt32(bytes[offset + 2]) << 8) | UInt32(bytes[offset + 3])
         case .little:
-            return UInt32(bytes[offset])
-                | (UInt32(bytes[offset + 1]) << 8)
-                | (UInt32(bytes[offset + 2]) << 16)
-                | (UInt32(bytes[offset + 3]) << 24)
+            return UInt32(bytes[offset]) | (UInt32(bytes[offset + 1]) << 8) | (UInt32(bytes[offset + 2]) << 16) | (UInt32(bytes[offset + 3]) << 24)
         }
     }
 
     private static func u16(_ bytes: [UInt8], _ offset: Int, _ order: ByteOrder) -> UInt16 {
         switch order {
-        case .big:
-            return (UInt16(bytes[offset]) << 8) | UInt16(bytes[offset + 1])
-        case .little:
-            return UInt16(bytes[offset]) | (UInt16(bytes[offset + 1]) << 8)
+        case .big: return (UInt16(bytes[offset]) << 8) | UInt16(bytes[offset + 1])
+        case .little: return UInt16(bytes[offset]) | (UInt16(bytes[offset + 1]) << 8)
         }
     }
 }
