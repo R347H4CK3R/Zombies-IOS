@@ -1,23 +1,19 @@
 import Foundation
 
-/// Reconstructs real T6/BO2 GfxWorld triangles from the decoded PS3 zone payload.
+/// Reconstructs real T6/BO2 GfxWorld triangles from a decoded PS3 zone payload.
 ///
-/// T6 stores an 80-byte GfxSurface containing srfTriangles_t.  The surface does
-/// not contain geometry itself: `firstVertex` addresses the global packed world
-/// vertex stream and `baseIndex` addresses the global UInt16 index stream.
-///
-/// Earlier builds rendered each surface's bounds as a box.  That was useful as
-/// a decoder diagnostic, but it could never look like Tranzit.  This extractor
-/// now locates the actual GfxPackedWorldVertex and index buffers, validates them
-/// against many GfxSurface bounds, and emits the real triangle topology.
+/// The important PS3 detail here is that the decoded XFile payload is not
+/// guaranteed to begin on the same 16-byte phase as the serialized GfxSurface
+/// array.  The XFile header is commonly 0x28 bytes, so scanning only offsets
+/// 0,16,32... can miss every real GfxSurface even though the asset table parsed.
 enum T6GfxSurfaceMeshExtractor {
     private static let gfxSurfaceStride = 80
     private static let packedWorldVertexStride = 36
-    private static let minimumRun = 12
-    private static let maxScanBytes = 96 * 1024 * 1024
-    private static let maxSurfaceCount = 6_000
+    private static let minimumRun = 8
+    private static let maxScanBytes = 128 * 1024 * 1024
+    private static let maxSurfaceCount = 8_000
     private static let maxOutputVertices = 65_000
-    private static let maxOutputTriangles = 120_000
+    private static let maxOutputTriangles = 140_000
 
     private struct SurfaceRecord {
         let mins: SIMD3<Float>
@@ -48,8 +44,8 @@ enum T6GfxSurfaceMeshExtractor {
             var surfaces: [SurfaceRecord] = []
             surfaces.reserveCapacity(min(run.count, maxSurfaceCount))
             for i in 0..<min(run.count, maxSurfaceCount) {
-                guard let surface = parseSurface(bytes, offset: run.offset + i * gfxSurfaceStride) else { break }
-                surfaces.append(surface)
+                guard let s = parseSurface(bytes, offset: run.offset + i * gfxSurfaceStride) else { break }
+                surfaces.append(s)
             }
             surfaces = rejectSpatialOutliers(surfaces)
             guard surfaces.count >= minimumRun else { return nil }
@@ -60,33 +56,33 @@ enum T6GfxSurfaceMeshExtractor {
             var vertices: [SIMD3<Float>] = []
             var indices: [UInt16] = []
             vertices.reserveCapacity(min(maxOutputVertices, 48_000))
-            indices.reserveCapacity(min(maxOutputTriangles * 3, 180_000))
+            indices.reserveCapacity(min(maxOutputTriangles * 3, 240_000))
 
-            var acceptedSurfaces = 0
+            var accepted = 0
             for surface in surfaces {
                 if vertices.count + surface.vertexCount > maxOutputVertices { continue }
                 if indices.count / 3 >= maxOutputTriangles { break }
-                guard appendRealSurface(
+                if appendRealSurface(
                     surface,
                     bytes: bytes,
                     vertexBase: vertexBase,
                     indexBase: indexBase,
                     vertices: &vertices,
                     indices: &indices
-                ) else { continue }
-                acceptedSurfaces += 1
+                ) {
+                    accepted += 1
+                }
             }
 
-            guard acceptedSurfaces >= 4, vertices.count >= 48, indices.count >= 90 else { return nil }
-            let normalized = normalizeForSceneKit(vertices)
+            guard accepted >= 3, vertices.count >= 32, indices.count >= 60 else { return nil }
             return T6RuntimeMesh(
-                vertices: normalized,
+                vertices: normalizeForSceneKit(vertices),
                 indices: indices,
                 vertexStride: packedWorldVertexStride,
                 vertexOffset: vertexBase,
                 positionOffset: 0,
                 indexOffset: indexBase,
-                byteOrder: "GFXWORLD:BE REAL S:\(acceptedSurfaces) V36 ZUP"
+                byteOrder: "GFXWORLD:BE REAL S:\(accepted) V36 PS3"
             )
         }
     }
@@ -96,12 +92,16 @@ enum T6GfxSurfaceMeshExtractor {
     private static func findBestSurfaceRun(_ bytes: UnsafeBufferPointer<UInt8>) -> Run? {
         guard bytes.count >= gfxSurfaceStride * minimumRun else { return nil }
         var best: Run?
-        var offset = 0
         let lastStart = bytes.count - gfxSurfaceStride * minimumRun
 
+        // Do not assume the decoded payload is 16-byte phase aligned. The PS3
+        // XFile content can start at 0x28 (8 mod 16), and individual streams can
+        // also be rebased. Four-byte scanning still respects every field in the
+        // structure while covering all legal phases.
+        var offset = 0
         while offset <= lastStart {
             guard parseSurface(bytes, offset: offset) != nil else {
-                offset += 16
+                offset += 4
                 continue
             }
 
@@ -125,15 +125,15 @@ enum T6GfxSurfaceMeshExtractor {
                 let span = globalMax - globalMin
                 let largest = max(span.x, max(span.y, span.z))
                 let second = [span.x, span.y, span.z].sorted()[1]
-                let score = Float(count) * 20
-                    + min(Float(triTotal), 500_000) * 0.002
+                let score = Float(count) * 22
+                    + min(Float(triTotal), 750_000) * 0.002
                     + min(largest, 500_000) * 0.0005
                     + min(second, 250_000) * 0.0005
                 let candidate = Run(offset: offset, count: count, score: score)
                 if best == nil || candidate.score > best!.score { best = candidate }
                 offset = cursor
             } else {
-                offset += 16
+                offset += 4
             }
         }
         return best
@@ -142,13 +142,10 @@ enum T6GfxSurfaceMeshExtractor {
     private static func parseSurface(_ bytes: UnsafeBufferPointer<UInt8>, offset: Int) -> SurfaceRecord? {
         guard offset >= 0, offset + gfxSurfaceStride <= bytes.count else { return nil }
 
-        // T6 srfTriangles_t layout (48 bytes):
-        // mins[3], vertexDataOffset0, maxs[3], vertexDataOffset1,
-        // firstVertex, himipRadiusInvSq, vertexCount, triCount, baseIndex.
         let mins = SIMD3<Float>(beFloat(bytes, offset), beFloat(bytes, offset + 4), beFloat(bytes, offset + 8))
-        let vertexDataOffset0 = Int(Int32(bitPattern: be32(bytes, offset + 12)))
+        let vdo0 = Int(Int32(bitPattern: be32(bytes, offset + 12)))
         let maxs = SIMD3<Float>(beFloat(bytes, offset + 16), beFloat(bytes, offset + 20), beFloat(bytes, offset + 24))
-        let vertexDataOffset1 = Int(Int32(bitPattern: be32(bytes, offset + 28)))
+        let vdo1 = Int(Int32(bitPattern: be32(bytes, offset + 28)))
         let firstVertex = Int(Int32(bitPattern: be32(bytes, offset + 32)))
         let himip = beFloat(bytes, offset + 36)
         let vertexCount = Int(be16(bytes, offset + 40))
@@ -157,10 +154,9 @@ enum T6GfxSurfaceMeshExtractor {
 
         guard finite(mins), finite(maxs), himip.isFinite,
               mins.x <= maxs.x, mins.y <= maxs.y, mins.z <= maxs.z,
-              vertexDataOffset0 >= 0, vertexDataOffset1 >= 0,
               firstVertex >= 0, firstVertex < 8_000_000,
-              vertexCount >= 3, vertexCount <= 65_535,
-              triCount >= 1, triCount <= 65_535,
+              vertexCount >= 3, vertexCount <= 32_768,
+              triCount >= 1, triCount <= 32_768,
               baseIndex >= 0, baseIndex < 80_000_000 else { return nil }
 
         let span = maxs - mins
@@ -168,7 +164,6 @@ enum T6GfxSurfaceMeshExtractor {
         let sorted = [span.x, span.y, span.z].sorted()
         guard largest > 0.0001, largest < 2_000_000, sorted[1] > 0.00001 else { return nil }
 
-        // Tail of GfxSurface is material/light indices followed by bounds[2].
         let b0 = SIMD3<Float>(beFloat(bytes, offset + 56), beFloat(bytes, offset + 60), beFloat(bytes, offset + 64))
         let b1 = SIMD3<Float>(beFloat(bytes, offset + 68), beFloat(bytes, offset + 72), beFloat(bytes, offset + 76))
         guard finite(b0), finite(b1),
@@ -178,8 +173,8 @@ enum T6GfxSurfaceMeshExtractor {
         return SurfaceRecord(
             mins: mins,
             maxs: maxs,
-            vertexDataOffset0: vertexDataOffset0,
-            vertexDataOffset1: vertexDataOffset1,
+            vertexDataOffset0: vdo0,
+            vertexDataOffset1: vdo1,
             firstVertex: firstVertex,
             vertexCount: vertexCount,
             triCount: triCount,
@@ -187,43 +182,37 @@ enum T6GfxSurfaceMeshExtractor {
         )
     }
 
-    // MARK: - Real GfxWorld buffers
+    // MARK: - GfxWorld vertex/index stream discovery
 
     private static func findVertexStreamBase(
         _ bytes: UnsafeBufferPointer<UInt8>,
         surfaces: [SurfaceRecord]
     ) -> Int? {
-        // Use a bounded surface as an anchor.  A real GfxPackedWorldVertex starts
-        // with big-endian xyz, so any matching vertex implies a candidate global
-        // stream base = position - firstVertex * 36.
         let anchors = surfaces
-            .filter { $0.vertexCount >= 4 && $0.vertexCount <= 2048 }
+            .filter { $0.vertexCount >= 4 && $0.vertexCount <= 4096 }
             .sorted { boundsVolume($0) < boundsVolume($1) }
-            .prefix(8)
+            .prefix(16)
 
-        var candidateScores: [Int: Int] = [:]
+        var scores: [Int: Int] = [:]
         for anchor in anchors {
             let margin = boundsMargin(anchor)
             var offset = 0
             var matches = 0
-            while offset + 12 <= bytes.count && matches < 256 {
+            while offset + 12 <= bytes.count && matches < 1024 {
                 let p = SIMD3<Float>(beFloat(bytes, offset), beFloat(bytes, offset + 4), beFloat(bytes, offset + 8))
                 if finite(p), contains(p, in: anchor, margin: margin) {
                     let base = offset - anchor.firstVertex * packedWorldVertexStride
                     if base >= 0,
                        base + (anchor.firstVertex + anchor.vertexCount) * packedWorldVertexStride <= bytes.count {
                         let score = validateVertexBase(base, bytes: bytes, surfaces: surfaces)
-                        if score > 0 { candidateScores[base] = max(candidateScores[base] ?? 0, score) }
+                        if score > 0 { scores[base] = max(scores[base] ?? 0, score) }
                     }
                     matches += 1
                 }
                 offset += 4
             }
-            if let best = candidateScores.max(by: { $0.value < $1.value }), best.value >= 10 {
-                return best.key
-            }
         }
-        return candidateScores.max(by: { $0.value < $1.value }).flatMap { $0.value >= 8 ? $0.key : nil }
+        return scores.max(by: { $0.value < $1.value }).flatMap { $0.value >= 6 ? $0.key : nil }
     }
 
     private static func validateVertexBase(
@@ -233,15 +222,14 @@ enum T6GfxSurfaceMeshExtractor {
     ) -> Int {
         var score = 0
         var checked = 0
-        for s in surfaces.prefix(96) {
-            guard checked < 32 else { break }
-            let first = base + s.firstVertex * packedWorldVertexStride
+        for s in surfaces.prefix(160) {
+            guard checked < 56 else { break }
             let last = base + (s.firstVertex + s.vertexCount - 1) * packedWorldVertexStride
-            guard first >= 0, last + 12 <= bytes.count else { continue }
-            let margin = boundsMargin(s)
-            let sampleIndices = [0, s.vertexCount / 2, s.vertexCount - 1]
+            guard last + 12 <= bytes.count else { continue }
+            let margin = boundsMargin(s) * 2
+            let sample = [0, s.vertexCount / 3, (s.vertexCount * 2) / 3, s.vertexCount - 1]
             var hits = 0
-            for local in sampleIndices {
+            for local in sample {
                 let off = base + (s.firstVertex + local) * packedWorldVertexStride
                 let p = SIMD3<Float>(beFloat(bytes, off), beFloat(bytes, off + 4), beFloat(bytes, off + 8))
                 if finite(p), contains(p, in: s, margin: margin) { hits += 1 }
@@ -256,28 +244,25 @@ enum T6GfxSurfaceMeshExtractor {
         _ bytes: UnsafeBufferPointer<UInt8>,
         surfaces: [SurfaceRecord]
     ) -> Int? {
-        // Locate one surface's local index sequence, derive the global index-buffer
-        // base using baseIndex, then verify the same base against many surfaces.
         let anchors = surfaces
-            .filter { $0.vertexCount >= 8 && $0.vertexCount <= 4096 && $0.triCount >= 4 }
+            .filter { $0.vertexCount >= 6 && $0.vertexCount <= 8192 && $0.triCount >= 2 }
             .sorted { $0.vertexCount < $1.vertexCount }
-            .prefix(10)
+            .prefix(20)
 
         var bestBase: Int?
         var bestScore = 0
-
         for anchor in anchors {
             var offset = 0
             var candidates = 0
-            while offset + 24 <= bytes.count && candidates < 512 {
-                if looksLikeLocalIndexWindow(bytes, offset: offset, vertexCount: anchor.vertexCount) {
+            while offset + 24 <= bytes.count && candidates < 2048 {
+                if looksLikeIndexWindow(bytes, offset: offset, surface: anchor) {
                     let base = offset - anchor.baseIndex * 2
                     if base >= 0 {
                         let score = validateIndexBase(base, bytes: bytes, surfaces: surfaces)
                         if score > bestScore {
                             bestScore = score
                             bestBase = base
-                            if score >= 28 { return base }
+                            if score >= 20 { return base }
                         }
                     }
                     candidates += 1
@@ -285,22 +270,25 @@ enum T6GfxSurfaceMeshExtractor {
                 offset += 2
             }
         }
-        return bestScore >= 12 ? bestBase : nil
+        return bestScore >= 7 ? bestBase : nil
     }
 
-    private static func looksLikeLocalIndexWindow(
+    private static func looksLikeIndexWindow(
         _ bytes: UnsafeBufferPointer<UInt8>,
         offset: Int,
-        vertexCount: Int
+        surface: SurfaceRecord
     ) -> Bool {
         guard offset >= 0, offset + 24 <= bytes.count else { return false }
+        var local = 0
+        var global = 0
         var unique = Set<UInt16>()
         for i in 0..<12 {
             let v = be16(bytes, offset + i * 2)
-            guard Int(v) < vertexCount else { return false }
             unique.insert(v)
+            if Int(v) < surface.vertexCount { local += 1 }
+            if Int(v) >= surface.firstVertex && Int(v) < surface.firstVertex + surface.vertexCount { global += 1 }
         }
-        return unique.count >= 4
+        return unique.count >= 4 && max(local, global) >= 10
     }
 
     private static func validateIndexBase(
@@ -310,23 +298,21 @@ enum T6GfxSurfaceMeshExtractor {
     ) -> Int {
         var score = 0
         var checked = 0
-        for s in surfaces.prefix(128) {
-            guard checked < 40 else { break }
+        for s in surfaces.prefix(160) {
+            guard checked < 64 else { break }
             let off = base + s.baseIndex * 2
             guard off >= 0, off + min(s.triCount * 6, 24) <= bytes.count else { continue }
-            let sampleCount = min(s.triCount * 3, 12)
-            var localHits = 0
-            var globalHits = 0
+            let count = min(s.triCount * 3, 12)
+            var local = 0
+            var global = 0
             var unique = Set<UInt16>()
-            for i in 0..<sampleCount {
-                let raw = be16(bytes, off + i * 2)
-                unique.insert(raw)
-                if Int(raw) < s.vertexCount { localHits += 1 }
-                if Int(raw) >= s.firstVertex && Int(raw) < s.firstVertex + s.vertexCount { globalHits += 1 }
+            for i in 0..<count {
+                let v = be16(bytes, off + i * 2)
+                unique.insert(v)
+                if Int(v) < s.vertexCount { local += 1 }
+                if Int(v) >= s.firstVertex && Int(v) < s.firstVertex + s.vertexCount { global += 1 }
             }
-            if unique.count >= 3 && max(localHits, globalHits) >= max(6, sampleCount - 2) {
-                score += 1
-            }
+            if unique.count >= 3 && max(local, global) >= max(5, count - 3) { score += 1 }
             checked += 1
         }
         return score
@@ -340,12 +326,10 @@ enum T6GfxSurfaceMeshExtractor {
         vertices: inout [SIMD3<Float>],
         indices: inout [UInt16]
     ) -> Bool {
-        guard surface.vertexCount >= 3,
-              vertices.count + surface.vertexCount <= maxOutputVertices else { return false }
-
+        guard vertices.count + surface.vertexCount <= maxOutputVertices else { return false }
         let oldVertexCount = vertices.count
         let baseOut = oldVertexCount
-        let margin = boundsMargin(surface) * 4
+        let margin = boundsMargin(surface) * 6
 
         for local in 0..<surface.vertexCount {
             let off = vertexBase + (surface.firstVertex + local) * packedWorldVertexStride
@@ -394,7 +378,7 @@ enum T6GfxSurfaceMeshExtractor {
             if indices.count / 3 + validTriangles >= maxOutputTriangles { break }
         }
 
-        guard validTriangles >= max(1, min(3, surface.triCount / 4)) else {
+        guard validTriangles >= 1 else {
             vertices.removeLast(vertices.count - oldVertexCount)
             return false
         }
@@ -426,8 +410,7 @@ enum T6GfxSurfaceMeshExtractor {
 
     private static func boundsMargin(_ s: SurfaceRecord) -> Float {
         let span = s.maxs - s.mins
-        let largest = max(span.x, max(span.y, span.z))
-        return max(0.05, largest * 0.03)
+        return max(0.05, max(span.x, max(span.y, span.z)) * 0.03)
     }
 
     private static func contains(_ p: SIMD3<Float>, in s: SurfaceRecord, margin: Float) -> Bool {
