@@ -57,6 +57,42 @@ jobs:
             -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5' \
             CODE_SIGNING_ALLOWED=NO
 
+      - name: Build iPhone 17 Pro simulator game
+        run: |
+          xcodebuild \
+            -project ZombiesIOS.xcodeproj \
+            -scheme ZombiesIOS \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5' \
+            -derivedDataPath build/SimulatorDerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Launch game on iPhone 17 Pro simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIM_NAME='iPhone 17 Pro'
+          BUNDLE_ID='com.r347h4ck3r.zombiesios'
+          xcrun simctl boot "$SIM_NAME" 2>/dev/null || true
+          xcrun simctl bootstatus "$SIM_NAME" -b
+          APP_PATH="$(find build/SimulatorDerivedData/Build/Products/Debug-iphonesimulator -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$APP_PATH"
+          xcrun simctl install "$SIM_NAME" "$APP_PATH"
+          xcrun simctl launch "$SIM_NAME" "$BUNDLE_ID"
+          sleep 8
+          xcrun simctl io "$SIM_NAME" screenshot build/iPhone17Pro-game-smoke.png
+          test -s build/iPhone17Pro-game-smoke.png
+
+      - name: Upload simulator gameplay screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: iPhone17Pro-game-smoke
+          path: build/iPhone17Pro-game-smoke.png
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Build unsigned device app
         run: |
           xcodebuild \
