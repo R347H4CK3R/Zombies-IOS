@@ -54,7 +54,7 @@ jobs:
           xcodebuild test \
             -project ZombiesIOS.xcodeproj \
             -scheme ZombiesIOS \
-            -destination 'platform=iOS Simulator,name=iPhone 16 Pro,OS=latest' \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5' \
             CODE_SIGNING_ALLOWED=NO
 
       - name: Build unsigned device app
