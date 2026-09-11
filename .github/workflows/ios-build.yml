@@ -44,6 +44,45 @@ jobs:
             exit 1
           }
 
+          test -f Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift || {
+            echo "::error::Final T6 GfxSurface world reconstructor is missing."
+            exit 1
+          }
+
+      - name: Wire final Tranzit world reconstruction
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift')
+          text = path.read_text()
+
+          old_budget = 'let decodeBudget = isMainTranzit ? 64 * 1024 * 1024 : 32 * 1024 * 1024'
+          new_budget = 'let decodeBudget = isMainTranzit ? 128 * 1024 * 1024 : 32 * 1024 * 1024'
+          if old_budget in text:
+              text = text.replace(old_budget, new_budget, 1)
+          elif new_budget not in text:
+              raise SystemExit('Could not locate Tranzit decode budget')
+
+          old_mesh = 'let mesh = T6MeshPreviewExtractor.extract(from: payload, scanLimit: payload.count)'
+          new_mesh = '''let mesh = T6GfxSurfaceMeshExtractor.extract(from: payload, scanLimit: payload.count)
+                        ?? T6MeshPreviewExtractor.extract(
+                            from: payload,
+                            scanLimit: min(payload.count, 32 * 1024 * 1024)
+                        )'''
+          if old_mesh in text:
+              text = text.replace(old_mesh, new_mesh, 1)
+          elif 'T6GfxSurfaceMeshExtractor.extract' not in text:
+              raise SystemExit('Could not locate runtime mesh extraction call')
+
+          path.write_text(text)
+          PY
+
+          grep -q 'T6GfxSurfaceMeshExtractor.extract' Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift
+          grep -q '128 \* 1024 \* 1024' Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift
+
       - name: Install XcodeGen
         run: brew install xcodegen
 
@@ -93,5 +132,5 @@ jobs:
             gh release create latest-build ZombiesIOS-unsigned.ipa \
               --target "$GITHUB_SHA" \
               --title "Latest ZombiesIOS IPA" \
-              --notes "Manual unsigned iOS build. Sign before installing on iPhone."
+              --notes "Unsigned iOS build with Tranzit GfxSurface world reconstruction. Sign before installing on iPhone."
           fi
