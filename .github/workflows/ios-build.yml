@@ -69,19 +69,18 @@ jobs:
           if budget_n != 1:
               raise SystemExit('Could not locate Tranzit decode budget')
 
-          # Production rendering must use the validated GfxWorld path only.
-          # The generic preview extractor can accept plausible random streams and
-          # make another fake-looking scene, which masks a real decoder failure.
-          old_mesh = '''let mesh = T6GfxSurfaceMeshExtractor.extract(from: payload, scanLimit: payload.count)
-                        ?? T6MeshPreviewExtractor.extract(from: payload, scanLimit: payload.count)'''
-          new_mesh = '''let mesh = T6GfxSurfaceMeshExtractor.extract(
+          # Remove the heuristic mesh fallback regardless of indentation/formatting.
+          mesh_pattern = (
+              r'let mesh = T6GfxSurfaceMeshExtractor\.extract\(from: payload, scanLimit: payload\.count\)'
+              r'\s*\?\?\s*T6MeshPreviewExtractor\.extract\(from: payload, scanLimit: payload\.count\)'
+          )
+          mesh_replacement = '''let mesh = T6GfxSurfaceMeshExtractor.extract(
                         from: payload,
                         scanLimit: payload.count
                     )'''
-          if old_mesh in text:
-              text = text.replace(old_mesh, new_mesh, 1)
-          elif '?? T6MeshPreviewExtractor.extract' in text:
-              raise SystemExit('Unexpected preview fallback layout')
+          text, mesh_n = re.subn(mesh_pattern, mesh_replacement, text, count=1)
+          if mesh_n != 1 and '?? T6MeshPreviewExtractor.extract' in text:
+              raise SystemExit('Could not remove preview mesh fallback')
 
           text = text.replace(
               'runtimeStatus = isMainTranzit ? "TRANZIT GFXSURFACE SEARCH" : "T6 WORLD MESH SEARCH"',
@@ -89,7 +88,6 @@ jobs:
               1,
           )
 
-          # Do not let the name of zm_transit.ff beat an actually decoded mesh.
           text = text.replace(
               'if resource.fileName.lowercased() == "zm_transit.ff" { score += 50_000 }',
               'if resource.fileName.lowercased() == "zm_transit.ff", mesh != nil { score += 50_000 }',
@@ -110,20 +108,13 @@ jobs:
               raise SystemExit('Could not locate GfxWorld scan cap')
           extractor.write_text(etext)
 
-          # If real map reconstruction fails, do not draw the old tan debug arena
-          # and make it look as if decoding succeeded.
           scene = Path('Sources/ZombiesIOS/Views/NativeFPSSceneView.swift')
           stext = scene.read_text()
-          stext = stext.replace(
-              '''            } else {
-                buildSafetyFloor(visible: true)
-                buildFallbackArena()
-            }''',
-              '''            } else {
-                buildSafetyFloor(visible: true)
-            }''',
-              1,
+          fallback_pattern = (
+              r'(if runtimeMesh != nil \{\s*buildSafetyFloor\(visible: false\)\s*buildDecodedWorld\(\)\s*\} else \{\s*'
+              r'buildSafetyFloor\(visible: true\))\s*buildFallbackArena\(\)'
           )
+          stext, _ = re.subn(fallback_pattern, r'\1', stext, count=1)
           scene.write_text(stext)
           PY
 
@@ -134,6 +125,9 @@ jobs:
           grep -q 'mesh != nil { score += 50_000 }' Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift
           grep -q 'private static let maxScanBytes = 128 \* 1024 \* 1024' Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift
           grep -q 'GFXWORLD:BE REAL' Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift
+          ! grep -q 'buildFallbackArena()' Sources/ZombiesIOS/Views/NativeFPSSceneView.swift || {
+            echo "::warning::Fallback arena function remains defined but must not be called by buildScene."
+          }
 
       - name: Install XcodeGen
         run: brew install xcodegen
