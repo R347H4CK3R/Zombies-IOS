@@ -13,9 +13,10 @@ struct NativeFPSSceneView: UIViewRepresentable {
     @Binding var ammo: Int
     @Binding var kills: Int
     let mapSeed: Int
+    let runtimeMesh: T6RuntimeMesh?
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(mapSeed: mapSeed, health: $health, ammo: $ammo, kills: $kills)
+        Coordinator(mapSeed: mapSeed, runtimeMesh: runtimeMesh, health: $health, ammo: $ammo, kills: $kills)
     }
 
     func makeUIView(context: Context) -> SCNView {
@@ -60,6 +61,7 @@ struct NativeFPSSceneView: UIViewRepresentable {
         private let healthBinding: Binding<Int>
         private let ammoBinding: Binding<Int>
         private let killsBinding: Binding<Int>
+        private let runtimeMesh: T6RuntimeMesh?
         private weak var scnView: SCNView?
         private var displayLink: CADisplayLink?
         private var lastTimestamp: CFTimeInterval = 0
@@ -76,10 +78,11 @@ struct NativeFPSSceneView: UIViewRepresentable {
         private let muzzleNode = SCNNode()
         private let muzzleLightNode = SCNNode()
 
-        init(mapSeed: Int, health: Binding<Int>, ammo: Binding<Int>, kills: Binding<Int>) {
+        init(mapSeed: Int, runtimeMesh: T6RuntimeMesh?, health: Binding<Int>, ammo: Binding<Int>, kills: Binding<Int>) {
             healthBinding = health
             ammoBinding = ammo
             killsBinding = kills
+            self.runtimeMesh = runtimeMesh
             rng = SeededGenerator(seed: UInt64(bitPattern: Int64(mapSeed == 0 ? 0xB02 : mapSeed)))
             super.init()
             buildScene()
@@ -147,6 +150,7 @@ struct NativeFPSSceneView: UIViewRepresentable {
             scene.rootNode.addChildNode(floorNode)
 
             buildArena()
+            buildDecodedMesh()
             buildProps()
             buildPlayer()
             buildEnemies()
@@ -170,11 +174,38 @@ struct NativeFPSSceneView: UIViewRepresentable {
             environmentBox(60, 5, 1, SCNVector3(0, 2.5, 30), concrete)
             environmentBox(1, 5, 60, SCNVector3(-30, 2.5, 0), concrete)
             environmentBox(1, 5, 60, SCNVector3(30, 2.5, 0), concrete)
-            environmentBox(18, 4, 1, SCNVector3(-8, 2, -8), concrete)
+            if runtimeMesh == nil {
+                environmentBox(18, 4, 1, SCNVector3(-8, 2, -8), concrete)
+            }
             environmentBox(1, 4, 16, SCNVector3(10, 2, 4), concrete)
             environmentBox(12, 3, 1, SCNVector3(-12, 1.5, 12), concrete)
             environmentBox(1, 3, 10, SCNVector3(-20, 1.5, -2), concrete)
             environmentBox(8, 0.35, 6, SCNVector3(13, 4, -13), concrete)
+        }
+
+        private func buildDecodedMesh() {
+            guard let runtimeMesh,
+                  runtimeMesh.vertices.count >= 3,
+                  runtimeMesh.indices.count >= 3 else { return }
+
+            let vertices = runtimeMesh.vertices.map { SCNVector3($0.x, $0.y, $0.z) }
+            let source = SCNGeometrySource(vertices: vertices)
+            let indices = runtimeMesh.indices.map { Int32($0) }
+            let element = SCNGeometryElement(indices: indices, primitiveType: .triangles)
+            let geometry = SCNGeometry(sources: [source], elements: [element])
+
+            let material = SCNMaterial()
+            material.diffuse.contents = UIColor(red: 0.28, green: 0.25, blue: 0.20, alpha: 1)
+            material.roughness.contents = 0.88
+            material.metalness.contents = 0.04
+            material.isDoubleSided = true
+            geometry.materials = [material]
+
+            let node = SCNNode(geometry: geometry)
+            node.name = "t6-decoded-mesh"
+            node.position = SCNVector3(-8, 2.0, -8)
+            node.categoryBitMask = environmentCategory
+            scene.rootNode.addChildNode(node)
         }
 
         private func buildProps() {
