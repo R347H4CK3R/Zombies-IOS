@@ -15,7 +15,7 @@ struct TranzitTouchGameplayView: View {
     @State private var health = 100
     @State private var ammo = 30
     @State private var kills = 0
-    @State private var runtimeStatus = "Opening BO2 stream…"
+    @State private var runtimeStatus = "Opening Tranzit stream…"
     @State private var streamedBytes: UInt64 = 0
     @State private var streamOffset: UInt64 = 0
     @State private var streamProgress: Double = 0
@@ -61,8 +61,11 @@ struct TranzitTouchGameplayView: View {
                 VStack(spacing: 6) {
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(area.displayName.uppercased())
+                            Text("TRANZIT")
                                 .font(.headline.monospaced()).foregroundStyle(.white)
+                            Text("SPAWN \(area.displayName.uppercased())")
+                                .font(.caption2.bold().monospaced())
+                                .foregroundStyle(.white.opacity(0.72))
                             Text("HP \(health)")
                                 .font(.title3.bold().monospaced())
                                 .foregroundStyle(health > 35 ? .white : .red)
@@ -175,7 +178,7 @@ struct TranzitTouchGameplayView: View {
                 }
             }
         }
-        .navigationTitle("Playable Runtime")
+        .navigationTitle("Tranzit")
         .navigationBarTitleDisplayMode(.inline)
         .preferredColorScheme(.dark)
         .task { await validateStream() }
@@ -254,35 +257,41 @@ struct TranzitTouchGameplayView: View {
         var best: (resource: TranzitLoadedResource, report: T6DecodedPayloadReport, assets: T6ZoneAssetProbeReport, mesh: T6RuntimeMesh?)?
         var lastError: Error?
 
-        for resource in candidates.prefix(6) {
+        for resource in candidates.prefix(8) {
             do {
                 runtimeStatus = "T6 DEEP DECODING \(resource.fileName)"
                 await Task.yield()
 
+                let isMainTranzit = resource.fileName.lowercased() == "zm_transit.ff"
+                let decodeBudget = isMainTranzit ? 64 * 1024 * 1024 : 32 * 1024 * 1024
                 let report = try await decoder.decodePrefix(
                     rootURL: rootURL,
                     resource: resource,
-                    maxDecodedBytes: 24 * 1024 * 1024,
-                    maxChunks: 1536
+                    maxDecodedBytes: decodeBudget,
+                    maxChunks: isMainTranzit ? 4096 : 2048
                 )
 
-                runtimeStatus = "T6 WORLD MESH SEARCH"
+                runtimeStatus = isMainTranzit ? "TRANZIT WORLD MESH SEARCH" : "T6 WORLD MESH SEARCH"
                 await Task.yield()
 
                 let payload = report.payloadPrefix
                 let analysis = await Task.detached(priority: .userInitiated) { () -> (T6ZoneAssetProbeReport, T6RuntimeMesh?) in
                     let assets = T6ZoneAssetProbe.analyze(payload)
-                    let mesh = T6MeshPreviewExtractor.extract(from: payload, scanLimit: min(payload.count, 24 * 1024 * 1024))
+                    let mesh = T6MeshPreviewExtractor.extract(from: payload, scanLimit: payload.count)
                     return (assets, mesh)
                 }.value
                 let assets = analysis.0
                 let mesh = analysis.1
 
-                if best == nil || decodeScore(report: report, assets: assets, mesh: mesh) > decodeScore(report: best!.report, assets: best!.assets, mesh: best!.mesh) {
+                if best == nil || decodeScore(resource: resource, report: report, assets: assets, mesh: mesh) > decodeScore(resource: best!.resource, report: best!.report, assets: best!.assets, mesh: best!.mesh) {
                     best = (resource, report, assets, mesh)
                 }
 
-                if assets.topLevelParsed && assets.xModelAssetCount > 0,
+                // Only stop early for the actual full-map Tranzit container. Area
+                // gump files are useful fallbacks but must never prevent zm_transit.ff
+                // from being decoded and considered for the world mesh.
+                if isMainTranzit,
+                   assets.topLevelParsed,
                    let mesh,
                    mesh.triangleCount >= 90 {
                     break
@@ -294,7 +303,7 @@ struct TranzitTouchGameplayView: View {
 
         guard let best else {
             runtimeStatus = "PLAYABLE / T6 DECODE ERROR"
-            runtimeError = "Native map is playable, but no T6 PS3 container decoded successfully: \(lastError?.localizedDescription ?? "unknown decode failure")"
+            runtimeError = "Native controls are running, but no T6 PS3 Tranzit container decoded successfully: \(lastError?.localizedDescription ?? "unknown decode failure")"
             return
         }
 
@@ -307,11 +316,14 @@ struct TranzitTouchGameplayView: View {
         } ^ (best.mesh?.vertexOffset ?? 0) ^ (best.mesh?.indexOffset ?? 0)
 
         if let mesh = best.mesh {
-            runtimeStatus = "T6 WORLD GEOMETRY \(mesh.triangleCount) TRIANGLES"
-            runtimeError = nil
+            let isFullMap = best.resource.fileName.lowercased() == "zm_transit.ff"
+            runtimeStatus = isFullMap
+                ? "TRANZIT WORLD \(mesh.triangleCount) TRIANGLES"
+                : "T6 AREA GEOMETRY \(mesh.triangleCount) TRIANGLES"
+            runtimeError = isFullMap ? nil : "Full-map geometry was not selected yet; using \(best.resource.fileName) as a temporary area fallback."
         } else if best.assets.topLevelParsed {
             runtimeStatus = "T6 XASSET INDEX READY / NO WORLD MESH"
-            runtimeError = nil
+            runtimeError = "Tranzit assets decoded, but a renderable GfxWorld mesh has not been reconstructed yet."
         } else if best.report.isUsable {
             runtimeStatus = best.assets.candidateAssetCount > 0 ? "T6 ASSET SCAN READY" : "PLAYABLE + T6 DECODE"
             runtimeError = nil
@@ -329,7 +341,16 @@ struct TranzitTouchGameplayView: View {
             if lp != rp { return lp < rp }
             return lhs.byteCount > rhs.byteCount
         }
-        return [loadedArea.fastFile] + preferred
+
+        var ordered: [TranzitLoadedResource] = []
+        if let main = preferred.first(where: { $0.fileName.lowercased() == "zm_transit.ff" }) {
+            ordered.append(main)
+        }
+        ordered.append(loadedArea.fastFile)
+        ordered.append(contentsOf: preferred)
+
+        var seen = Set<String>()
+        return ordered.filter { seen.insert($0.relativePath.lowercased()).inserted }
     }
 
     private func decodePriority(_ name: String) -> Int {
@@ -341,8 +362,9 @@ struct TranzitTouchGameplayView: View {
         return 4
     }
 
-    private func decodeScore(report: T6DecodedPayloadReport, assets: T6ZoneAssetProbeReport, mesh: T6RuntimeMesh?) -> Int {
+    private func decodeScore(resource: TranzitLoadedResource, report: T6DecodedPayloadReport, assets: T6ZoneAssetProbeReport, mesh: T6RuntimeMesh?) -> Int {
         var score = 0
+        if resource.fileName.lowercased() == "zm_transit.ff" { score += 50_000 }
         if report.isUsable { score += 100 }
         score += min(500, report.decodedChunkCount)
         score += assets.topLevelParsed ? 2_000 : 0
