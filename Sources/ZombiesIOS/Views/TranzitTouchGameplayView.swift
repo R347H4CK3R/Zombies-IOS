@@ -104,7 +104,8 @@ struct TranzitTouchGameplayView: View {
                                 }
                             }
                             if let mesh = runtimeMesh {
-                                Text("MESH \(mesh.vertices.count)V/\(mesh.triangleCount)T")
+                                Text("WORLD \(mesh.vertices.count)V/\(mesh.triangleCount)T")
+                                Text(mesh.byteOrder)
                             }
                         }
                         .font(.caption2.bold().monospaced())
@@ -253,27 +254,25 @@ struct TranzitTouchGameplayView: View {
         var best: (resource: TranzitLoadedResource, report: T6DecodedPayloadReport, assets: T6ZoneAssetProbeReport, mesh: T6RuntimeMesh?)?
         var lastError: Error?
 
-        // Keep the first playable pass bounded for iPhone. The expensive geometry search
-        // runs on a detached utility task so SceneKit, touch input and CADisplayLink remain responsive.
-        for resource in candidates.prefix(3) {
+        for resource in candidates.prefix(6) {
             do {
-                runtimeStatus = "T6 DECODING \(resource.fileName)"
+                runtimeStatus = "T6 DEEP DECODING \(resource.fileName)"
                 await Task.yield()
 
                 let report = try await decoder.decodePrefix(
                     rootURL: rootURL,
                     resource: resource,
-                    maxDecodedBytes: 8 * 1024 * 1024,
-                    maxChunks: 512
+                    maxDecodedBytes: 24 * 1024 * 1024,
+                    maxChunks: 1536
                 )
 
-                runtimeStatus = "T6 MESH DECODING"
+                runtimeStatus = "T6 WORLD MESH SEARCH"
                 await Task.yield()
 
                 let payload = report.payloadPrefix
-                let analysis = await Task.detached(priority: .utility) { () -> (T6ZoneAssetProbeReport, T6RuntimeMesh?) in
+                let analysis = await Task.detached(priority: .userInitiated) { () -> (T6ZoneAssetProbeReport, T6RuntimeMesh?) in
                     let assets = T6ZoneAssetProbe.analyze(payload)
-                    let mesh = T6MeshPreviewExtractor.extract(from: payload, scanLimit: 6 * 1024 * 1024)
+                    let mesh = T6MeshPreviewExtractor.extract(from: payload, scanLimit: min(payload.count, 24 * 1024 * 1024))
                     return (assets, mesh)
                 }.value
                 let assets = analysis.0
@@ -283,7 +282,9 @@ struct TranzitTouchGameplayView: View {
                     best = (resource, report, assets, mesh)
                 }
 
-                if assets.topLevelParsed && assets.xModelAssetCount > 0 && mesh != nil {
+                if assets.topLevelParsed && assets.xModelAssetCount > 0,
+                   let mesh,
+                   mesh.triangleCount >= 90 {
                     break
                 }
             } catch {
@@ -303,13 +304,13 @@ struct TranzitTouchGameplayView: View {
         decodedSourceName = best.resource.fileName
         decodedSeed = best.report.payloadPrefix.prefix(256).reduce(0x146) { partial, byte in
             ((partial &* 16777619) ^ Int(byte)) & 0x7fffffff
-        }
+        } ^ (best.mesh?.vertexOffset ?? 0) ^ (best.mesh?.indexOffset ?? 0)
 
-        if best.mesh != nil {
-            runtimeStatus = "T6 MESH CANDIDATE LOADED"
+        if let mesh = best.mesh {
+            runtimeStatus = "T6 WORLD GEOMETRY \(mesh.triangleCount) TRIANGLES"
             runtimeError = nil
         } else if best.assets.topLevelParsed {
-            runtimeStatus = "T6 XASSET INDEX READY"
+            runtimeStatus = "T6 XASSET INDEX READY / NO WORLD MESH"
             runtimeError = nil
         } else if best.report.isUsable {
             runtimeStatus = best.assets.candidateAssetCount > 0 ? "T6 ASSET SCAN READY" : "PLAYABLE + T6 DECODE"
@@ -343,12 +344,16 @@ struct TranzitTouchGameplayView: View {
     private func decodeScore(report: T6DecodedPayloadReport, assets: T6ZoneAssetProbeReport, mesh: T6RuntimeMesh?) -> Int {
         var score = 0
         if report.isUsable { score += 100 }
-        score += min(200, report.decodedChunkCount)
+        score += min(500, report.decodedChunkCount)
         score += assets.topLevelParsed ? 2_000 : 0
         score += min(5_000, assets.topLevelAssetCount / 10)
         score += min(2_000, assets.xModelAssetCount * 10)
         score += min(500, assets.candidateAssetCount)
-        if let mesh { score += 10_000 + min(2_000, mesh.triangleCount) }
+        if let mesh {
+            score += 20_000
+            score += min(10_000, mesh.triangleCount * 2)
+            score += min(5_000, mesh.vertices.count)
+        }
         return score
     }
 
