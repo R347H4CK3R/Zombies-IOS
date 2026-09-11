@@ -113,8 +113,8 @@ struct NativeFPSSceneView: UIViewRepresentable {
 
         private func buildScene() {
             scene.physicsWorld.gravity = SCNVector3(0, -20, 0)
-            scene.fogStartDistance = runtimeMesh == nil ? 35 : 55
-            scene.fogEndDistance = runtimeMesh == nil ? 95 : 150
+            scene.fogStartDistance = runtimeMesh == nil ? 35 : 110
+            scene.fogEndDistance = runtimeMesh == nil ? 95 : 360
             scene.fogColor = UIColor(red: 0.055, green: 0.050, blue: 0.045, alpha: 1)
 
             let ambient = SCNLight()
@@ -134,22 +134,25 @@ struct NativeFPSSceneView: UIViewRepresentable {
             sunNode.eulerAngles = SCNVector3(-0.9, -0.55, 0)
             scene.rootNode.addChildNode(sunNode)
 
-            buildFloor()
             if runtimeMesh != nil {
+                buildSafetyFloor(visible: false)
                 buildDecodedWorld()
             } else {
+                buildSafetyFloor(visible: true)
                 buildFallbackArena()
             }
             buildPlayer()
             buildEnemies()
         }
 
-        private func buildFloor() {
+        private func buildSafetyFloor(visible: Bool) {
             let floor = SCNFloor()
             floor.reflectivity = 0
-            floor.firstMaterial?.diffuse.contents = UIColor(red: 0.085, green: 0.075, blue: 0.060, alpha: 1)
+            floor.firstMaterial?.diffuse.contents = UIColor(red: 0.085, green: 0.075, blue: 0.060, alpha: visible ? 1 : 0)
             floor.firstMaterial?.roughness.contents = 1.0
+            floor.firstMaterial?.transparency = visible ? 1 : 0
             let node = SCNNode(geometry: floor)
+            node.position.y = visible ? 0 : -0.35
             node.categoryBitMask = environmentCategory
             node.physicsBody = SCNPhysicsBody(type: .static, shape: nil)
             scene.rootNode.addChildNode(node)
@@ -175,7 +178,7 @@ struct NativeFPSSceneView: UIViewRepresentable {
             geometry.materials = [material]
 
             let node = SCNNode(geometry: geometry)
-            node.name = "t6-ps3-world"
+            node.name = "t6-ps3-tranzit-world"
             node.position = SCNVector3Zero
             node.categoryBitMask = environmentCategory
             node.physicsBody = SCNPhysicsBody(type: .static, shape: SCNPhysicsShape(geometry: geometry, options: nil))
@@ -202,13 +205,13 @@ struct NativeFPSSceneView: UIViewRepresentable {
         }
 
         private func buildPlayer() {
-            playerNode.position = runtimeMesh == nil ? SCNVector3(0, 1.65, 12) : SCNVector3(0, 1.65, 16)
+            playerNode.position = runtimeMesh == nil ? SCNVector3(0, 1.65, 12) : SCNVector3(0, 1.65, 20)
             scene.rootNode.addChildNode(playerNode)
 
             let camera = SCNCamera()
             camera.fieldOfView = 72
             camera.zNear = 0.03
-            camera.zFar = 220
+            camera.zFar = runtimeMesh == nil ? 220 : 520
             camera.wantsHDR = true
             camera.bloomIntensity = 0.18
             cameraNode.camera = camera
@@ -289,8 +292,9 @@ struct NativeFPSSceneView: UIViewRepresentable {
 
             playerNode.position.x += (forward.x * ny + right.x * nx) * speed * dt
             playerNode.position.z += (forward.z * ny + right.z * nx) * speed * dt
-            playerNode.position.x = max(-30, min(30, playerNode.position.x))
-            playerNode.position.z = max(-30, min(30, playerNode.position.z))
+            let worldLimit: Float = runtimeMesh == nil ? 30 : 70
+            playerNode.position.x = max(-worldLimit, min(worldLimit, playerNode.position.x))
+            playerNode.position.z = max(-worldLimit, min(worldLimit, playerNode.position.z))
 
             jumpVelocity -= 14.5 * dt
             playerNode.position.y += jumpVelocity * dt
