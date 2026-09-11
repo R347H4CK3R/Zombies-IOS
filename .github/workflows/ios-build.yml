@@ -45,11 +45,16 @@ jobs:
           }
 
           test -f Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift || {
-            echo "::error::Final T6 GfxSurface world reconstructor is missing."
+            echo "::error::T6 GfxSurface fallback reconstructor is missing."
             exit 1
           }
 
-      - name: Wire final Tranzit world reconstruction
+          test -f Sources/ZombiesIOS/Services/T6MeshPreviewExtractor.swift || {
+            echo "::error::T6 raw vertex/index mesh decoder is missing."
+            exit 1
+          }
+
+      - name: Wire real Tranzit mesh before bounds fallback
         shell: bash
         run: |
           set -euo pipefail
@@ -60,28 +65,38 @@ jobs:
           text = path.read_text()
 
           old_budget = 'let decodeBudget = isMainTranzit ? 64 * 1024 * 1024 : 32 * 1024 * 1024'
-          new_budget = 'let decodeBudget = isMainTranzit ? 128 * 1024 * 1024 : 32 * 1024 * 1024'
+          new_budget = 'let decodeBudget = isMainTranzit ? 128 * 1024 * 1024 : 48 * 1024 * 1024'
           if old_budget in text:
               text = text.replace(old_budget, new_budget, 1)
           elif new_budget not in text:
               raise SystemExit('Could not locate Tranzit decode budget')
 
-          old_mesh = 'let mesh = T6MeshPreviewExtractor.extract(from: payload, scanLimit: payload.count)'
-          new_mesh = '''let mesh = T6GfxSurfaceMeshExtractor.extract(from: payload, scanLimit: payload.count)
-                        ?? T6MeshPreviewExtractor.extract(
-                            from: payload,
-                            scanLimit: min(payload.count, 32 * 1024 * 1024)
-                        )'''
+          old_mesh = '''let mesh = T6GfxSurfaceMeshExtractor.extract(from: payload, scanLimit: payload.count)
+                        ?? T6MeshPreviewExtractor.extract(from: payload, scanLimit: payload.count)'''
+          new_mesh = '''let mesh = T6MeshPreviewExtractor.extract(
+                        from: payload,
+                        scanLimit: payload.count
+                    ) ?? T6GfxSurfaceMeshExtractor.extract(
+                        from: payload,
+                        scanLimit: payload.count
+                    )'''
           if old_mesh in text:
               text = text.replace(old_mesh, new_mesh, 1)
-          elif 'T6GfxSurfaceMeshExtractor.extract' not in text:
+          elif new_mesh not in text:
               raise SystemExit('Could not locate runtime mesh extraction call')
+
+          old_status = 'runtimeStatus = isMainTranzit ? "TRANZIT GFXSURFACE SEARCH" : "T6 WORLD MESH SEARCH"'
+          new_status = 'runtimeStatus = isMainTranzit ? "TRANZIT REAL MESH SEARCH" : "T6 REAL MESH SEARCH"'
+          if old_status in text:
+              text = text.replace(old_status, new_status, 1)
 
           path.write_text(text)
           PY
 
+          grep -q 'T6MeshPreviewExtractor.extract' Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift
           grep -q 'T6GfxSurfaceMeshExtractor.extract' Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift
           grep -q '128 \* 1024 \* 1024' Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift
+          grep -q 'TRANZIT REAL MESH SEARCH' Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -132,5 +147,5 @@ jobs:
             gh release create latest-build ZombiesIOS-unsigned.ipa \
               --target "$GITHUB_SHA" \
               --title "Latest ZombiesIOS IPA" \
-              --notes "Unsigned iOS build with Tranzit GfxSurface world reconstruction. Sign before installing on iPhone."
+              --notes "Unsigned iOS build prioritizing decoded BO2 Tranzit vertex/index geometry before GfxSurface bounds fallback. Sign before installing on iPhone."
           fi
