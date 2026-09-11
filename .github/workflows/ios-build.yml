@@ -69,7 +69,6 @@ jobs:
           if budget_n != 1:
               raise SystemExit('Could not locate Tranzit decode budget')
 
-          # Remove the heuristic mesh fallback regardless of indentation/formatting.
           mesh_pattern = (
               r'let mesh = T6GfxSurfaceMeshExtractor\.extract\(from: payload, scanLimit: payload\.count\)'
               r'\s*\?\?\s*T6MeshPreviewExtractor\.extract\(from: payload, scanLimit: payload\.count\)'
@@ -106,6 +105,39 @@ jobs:
           )
           if scan_n != 1:
               raise SystemExit('Could not locate GfxWorld scan cap')
+
+          # PS3 serialized GfxSurface records can carry negative/sentinel values in
+          # the two vertexDataOffset fields. They are not validity criteria for the
+          # packed world vertex/index streams, so do not reject an otherwise valid
+          # srfTriangles_t solely because those values are negative.
+          etext = etext.replace(
+              '              vertexDataOffset0 >= 0, vertexDataOffset1 >= 0,\n',
+              '',
+              1,
+          )
+
+          # The trailing bounds/light bytes differ across T6 platform layouts and
+          # were causing genuine PS3 surface runs to be discarded. Validate the
+          # canonical srfTriangles_t bounds/counts instead of requiring that tail.
+          etext, tail_n = re.subn(
+              r'\n        // Tail of GfxSurface is material/light indices followed by bounds\[2\]\.\n'
+              r'        let b0 = SIMD3<Float>\(beFloat\(bytes, offset \+ 56\), beFloat\(bytes, offset \+ 60\), beFloat\(bytes, offset \+ 64\)\)\n'
+              r'        let b1 = SIMD3<Float>\(beFloat\(bytes, offset \+ 68\), beFloat\(bytes, offset \+ 72\), beFloat\(bytes, offset \+ 76\)\)\n'
+              r'        guard finite\(b0\), finite\(b1\),\n'
+              r'              abs\(b0\.x\) < 4_000_000, abs\(b0\.y\) < 4_000_000, abs\(b0\.z\) < 4_000_000,\n'
+              r'              abs\(b1\.x\) < 4_000_000, abs\(b1\.y\) < 4_000_000, abs\(b1\.z\) < 4_000_000 else \{ return nil \}\n',
+              '\n',
+              etext,
+              count=1,
+          )
+          if tail_n != 1:
+              raise SystemExit('Could not relax PS3 GfxSurface tail validation')
+
+          # Surface arrays are 4-byte aligned in the decoded zone stream; scanning
+          # only 16-byte starts can miss the actual table. Keep the stronger
+          # triangle/bounds validation while scanning all aligned positions.
+          etext = etext.replace('offset += 16', 'offset += 4')
+          etext = etext.replace('private static let minimumRun = 12', 'private static let minimumRun = 6', 1)
           extractor.write_text(etext)
 
           scene = Path('Sources/ZombiesIOS/Views/NativeFPSSceneView.swift')
@@ -124,10 +156,9 @@ jobs:
           ! grep -q '?? T6MeshPreviewExtractor.extract' Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift
           grep -q 'mesh != nil { score += 50_000 }' Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift
           grep -q 'private static let maxScanBytes = 128 \* 1024 \* 1024' Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift
+          grep -q 'private static let minimumRun = 6' Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift
+          ! grep -q 'vertexDataOffset0 >= 0, vertexDataOffset1 >= 0' Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift
           grep -q 'GFXWORLD:BE REAL' Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift
-          ! grep -q 'buildFallbackArena()' Sources/ZombiesIOS/Views/NativeFPSSceneView.swift || {
-            echo "::warning::Fallback arena function remains defined but must not be called by buildScene."
-          }
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -178,5 +209,5 @@ jobs:
             gh release create latest-build ZombiesIOS-unsigned.ipa \
               --target "$GITHUB_SHA" \
               --title "Latest ZombiesIOS IPA" \
-              --notes "Unsigned iOS build using validated BO2 Tranzit GfxWorld geometry only; heuristic mesh and tan debug-arena fallbacks are disabled. Sign before installing on iPhone."
+              --notes "Unsigned iOS build with relaxed PS3 GfxSurface serialization validation and real GfxWorld geometry decode. Sign before installing on iPhone."
           fi
