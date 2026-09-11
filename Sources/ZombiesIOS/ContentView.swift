@@ -67,7 +67,7 @@ struct ContentView: View {
                                 TranzitTouchGameplayView(
                                     loadedArea: loadedArea,
                                     rootURL: runtimeSession.rootURL,
-                                    sharedContainerCount: runtimeSession.sharedContainers.count,
+                                    sharedContainers: runtimeSession.sharedContainers,
                                     audioBankCount: runtimeSession.audioBanks.count
                                 )
                             }
