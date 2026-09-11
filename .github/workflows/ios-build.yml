@@ -60,35 +60,40 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           path = Path('Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift')
           text = path.read_text()
 
-          old_budget = 'let decodeBudget = isMainTranzit ? 64 * 1024 * 1024 : 32 * 1024 * 1024'
-          new_budget = 'let decodeBudget = isMainTranzit ? 128 * 1024 * 1024 : 48 * 1024 * 1024'
-          if old_budget in text:
-              text = text.replace(old_budget, new_budget, 1)
-          elif new_budget not in text:
+          text, budget_n = re.subn(
+              r'let decodeBudget = isMainTranzit \? \d+ \* 1024 \* 1024 : \d+ \* 1024 \* 1024',
+              'let decodeBudget = isMainTranzit ? 128 * 1024 * 1024 : 48 * 1024 * 1024',
+              text,
+              count=1,
+          )
+          if budget_n != 1:
               raise SystemExit('Could not locate Tranzit decode budget')
 
-          old_mesh = '''let mesh = T6GfxSurfaceMeshExtractor.extract(from: payload, scanLimit: payload.count)
-                        ?? T6MeshPreviewExtractor.extract(from: payload, scanLimit: payload.count)'''
-          new_mesh = '''let mesh = T6MeshPreviewExtractor.extract(
+          mesh_pattern = (
+              r'let mesh = T6GfxSurfaceMeshExtractor\.extract\(from: payload, scanLimit: payload\.count\)'
+              r'\s*\?\? T6MeshPreviewExtractor\.extract\(from: payload, scanLimit: payload\.count\)'
+          )
+          mesh_replacement = '''let mesh = T6MeshPreviewExtractor.extract(
                         from: payload,
                         scanLimit: payload.count
                     ) ?? T6GfxSurfaceMeshExtractor.extract(
                         from: payload,
                         scanLimit: payload.count
                     )'''
-          if old_mesh in text:
-              text = text.replace(old_mesh, new_mesh, 1)
-          elif new_mesh not in text:
+          text, mesh_n = re.subn(mesh_pattern, mesh_replacement, text, count=1)
+          if mesh_n != 1 and 'let mesh = T6MeshPreviewExtractor.extract(' not in text:
               raise SystemExit('Could not locate runtime mesh extraction call')
 
-          old_status = 'runtimeStatus = isMainTranzit ? "TRANZIT GFXSURFACE SEARCH" : "T6 WORLD MESH SEARCH"'
-          new_status = 'runtimeStatus = isMainTranzit ? "TRANZIT REAL MESH SEARCH" : "T6 REAL MESH SEARCH"'
-          if old_status in text:
-              text = text.replace(old_status, new_status, 1)
+          text = text.replace(
+              'runtimeStatus = isMainTranzit ? "TRANZIT GFXSURFACE SEARCH" : "T6 WORLD MESH SEARCH"',
+              'runtimeStatus = isMainTranzit ? "TRANZIT REAL MESH SEARCH" : "T6 REAL MESH SEARCH"',
+              1,
+          )
 
           path.write_text(text)
           PY
