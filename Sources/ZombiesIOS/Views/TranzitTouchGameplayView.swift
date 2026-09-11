@@ -271,13 +271,14 @@ struct TranzitTouchGameplayView: View {
                     maxChunks: isMainTranzit ? 4096 : 2048
                 )
 
-                runtimeStatus = isMainTranzit ? "TRANZIT WORLD MESH SEARCH" : "T6 WORLD MESH SEARCH"
+                runtimeStatus = isMainTranzit ? "TRANZIT GFXSURFACE SEARCH" : "T6 WORLD MESH SEARCH"
                 await Task.yield()
 
                 let payload = report.payloadPrefix
                 let analysis = await Task.detached(priority: .userInitiated) { () -> (T6ZoneAssetProbeReport, T6RuntimeMesh?) in
                     let assets = T6ZoneAssetProbe.analyze(payload)
-                    let mesh = T6MeshPreviewExtractor.extract(from: payload, scanLimit: payload.count)
+                    let mesh = T6GfxSurfaceMeshExtractor.extract(from: payload, scanLimit: payload.count)
+                        ?? T6MeshPreviewExtractor.extract(from: payload, scanLimit: payload.count)
                     return (assets, mesh)
                 }.value
                 let assets = analysis.0
@@ -287,11 +288,10 @@ struct TranzitTouchGameplayView: View {
                     best = (resource, report, assets, mesh)
                 }
 
-                // Only stop early for the actual full-map Tranzit container. Area
-                // gump files are useful fallbacks but must never prevent zm_transit.ff
-                // from being decoded and considered for the world mesh.
+                // A sufficiently large mesh from the authoritative full-map
+                // container is enough to render immediately. Asset-table parsing
+                // is independent and must not hold the scene on the debug arena.
                 if isMainTranzit,
-                   assets.topLevelParsed,
                    let mesh,
                    mesh.triangleCount >= 90 {
                     break
