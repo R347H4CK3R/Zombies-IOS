@@ -61,10 +61,6 @@ actor TranzitRuntimeLoader {
 
         let index = TranzitRuntimeIndex(report: report)
 
-        // Inspect every matching area file, not only the first filename match.
-        // BO2 dumps can contain duplicate/stub entries at different paths. Prefer
-        // a recognized T6 PS3 container and then the smallest useful payload so
-        // the first native-runtime milestone keeps memory pressure low.
         var candidates: [Candidate] = []
         for area in TranzitArea.allCases {
             let matchingFiles = report.files.filter {
@@ -85,7 +81,14 @@ actor TranzitRuntimeLoader {
             }
         }
 
+        // A full Tranzit session should start where the original map starts rather
+        // than on whichever gump happens to be smallest. Bus Station is preferred
+        // as the player spawn, while zm_transit.ff is decoded separately as the
+        // authoritative full-map world container by TranzitTouchGameplayView.
         candidates.sort { lhs, rhs in
+            let lhsSpawn = lhs.area == .busstation
+            let rhsSpawn = rhs.area == .busstation
+            if lhsSpawn != rhsSpawn { return lhsSpawn && !rhsSpawn }
             if lhs.report.supportsRawXChunks != rhs.report.supportsRawXChunks {
                 return lhs.report.supportsRawXChunks && !rhs.report.supportsRawXChunks
             }
