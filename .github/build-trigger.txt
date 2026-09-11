@@ -47,3 +47,4 @@ real-mesh-build-fix 2026-09-11T07:43:00-05:00
 real-gfxworld-decoder 2026-09-11T07:56:30-05:00
 hardened-gfxworld-runtime 2026-09-11T08:03:00-05:00
 fixed-gfxworld-workflow 2026-09-11T08:22:00-05:00
+relaxed-ps3-gfxworld-surface-validation 2026-09-11T09:38:45-05:00
