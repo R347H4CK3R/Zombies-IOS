@@ -3,7 +3,7 @@ import SwiftUI
 struct TranzitTouchGameplayView: View {
     let loadedArea: TranzitLoadedArea
     let rootURL: URL
-    let sharedContainerCount: Int
+    let sharedContainers: [TranzitLoadedResource]
     let audioBankCount: Int
 
     @State private var move = CGSize.zero
@@ -26,6 +26,8 @@ struct TranzitTouchGameplayView: View {
     @State private var prefetchedBytes: UInt64 = 0
     @State private var decodedPayloadReport: T6DecodedPayloadReport?
     @State private var assetProbeReport: T6ZoneAssetProbeReport?
+    @State private var runtimeMesh: T6RuntimeMesh?
+    @State private var decodedSourceName = ""
     @State private var decodedSeed = 0
 
     private var area: TranzitArea { loadedArea.area }
@@ -50,7 +52,8 @@ struct TranzitTouchGameplayView: View {
                     health: $health,
                     ammo: $ammo,
                     kills: $kills,
-                    mapSeed: sceneSeed
+                    mapSeed: sceneSeed,
+                    runtimeMesh: runtimeMesh
                 )
                 .id(sceneSeed)
                 .ignoresSafeArea()
@@ -67,18 +70,22 @@ struct TranzitTouchGameplayView: View {
                                 .font(.caption.bold().monospaced())
                                 .foregroundStyle(.white.opacity(0.9))
                         }
-                        Spacer()
+                        Spacer(minLength: 90)
                         VStack(alignment: .trailing, spacing: 3) {
                             Text("\(ammo) / 30")
                                 .font(.title2.bold().monospaced())
                                 .foregroundStyle(ammo > 5 ? .white : .orange)
                             Text(runtimeStatus)
                                 .font(.caption2.bold()).foregroundStyle(runtimeError == nil ? .white.opacity(0.8) : .red)
-                            Text(ByteCountFormatter.string(fromByteCount: loadedArea.fastFile.byteCount, countStyle: .file))
-                                .font(.caption2.monospaced()).foregroundStyle(.white.opacity(0.58))
+                            if !decodedSourceName.isEmpty {
+                                Text(decodedSourceName)
+                                    .lineLimit(1)
+                                    .font(.caption2.monospaced()).foregroundStyle(.white.opacity(0.58))
+                            }
                         }
+                        .padding(.trailing, 92)
                     }
-                    .padding(.horizontal)
+                    .padding(.leading)
                     .padding(.top, 6)
                     .background(.black.opacity(0.28))
 
@@ -88,8 +95,16 @@ struct TranzitTouchGameplayView: View {
                             Text("XCHUNKS \(report.decodedChunkCount)")
                             Text("DECODED \(ByteCountFormatter.string(fromByteCount: Int64(report.decodedBytes), countStyle: .file))")
                             if let assets = assetProbeReport {
-                                Text("ASSETS \(assets.candidateAssetCount)")
-                                Text("MODELS \(assets.modelLikeCount)")
+                                if assets.topLevelParsed {
+                                    Text("XASSETS \(assets.topLevelAssetCount)")
+                                    Text("XMODELS \(assets.xModelAssetCount)")
+                                } else {
+                                    Text("ASSETS \(assets.candidateAssetCount)")
+                                    Text("MODELS \(assets.modelLikeCount)")
+                                }
+                            }
+                            if let mesh = runtimeMesh {
+                                Text("MESH \(mesh.vertices.count)V/\(mesh.triangleCount)T")
                             }
                         }
                         .font(.caption2.bold().monospaced())
@@ -234,32 +249,92 @@ struct TranzitTouchGameplayView: View {
 
     private func decodeT6Payload() async {
         let decoder = T6PS3PayloadDecoder()
-        do {
-            let report = try await decoder.decodePrefix(
-                rootURL: rootURL,
-                resource: loadedArea.fastFile,
-                maxDecodedBytes: 4 * 1024 * 1024,
-                maxChunks: 256
-            )
-            decodedPayloadReport = report
-            decodedSeed = report.payloadPrefix.prefix(256).reduce(0x146) { partial, byte in
-                ((partial &* 16777619) ^ Int(byte)) & 0x7fffffff
-            }
+        let candidates = decodeCandidates()
+        var best: (resource: TranzitLoadedResource, report: T6DecodedPayloadReport, assets: T6ZoneAssetProbeReport, mesh: T6RuntimeMesh?)?
+        var lastError: Error?
 
-            let assets = T6ZoneAssetProbe.analyze(report.payloadPrefix)
-            assetProbeReport = assets
+        for resource in candidates.prefix(6) {
+            do {
+                let report = try await decoder.decodePrefix(
+                    rootURL: rootURL,
+                    resource: resource,
+                    maxDecodedBytes: 16 * 1024 * 1024,
+                    maxChunks: 1024
+                )
+                let assets = T6ZoneAssetProbe.analyze(report.payloadPrefix)
+                let mesh = T6MeshPreviewExtractor.extract(from: report.payloadPrefix)
 
-            if report.isUsable {
-                runtimeStatus = assets.candidateAssetCount > 0 ? "T6 ASSET INDEX READY" : "PLAYABLE + T6 DECODE"
-                runtimeError = nil
-            } else {
-                runtimeStatus = report.status
-                runtimeError = report.firstError
+                if best == nil || decodeScore(report: report, assets: assets, mesh: mesh) > decodeScore(report: best!.report, assets: best!.assets, mesh: best!.mesh) {
+                    best = (resource, report, assets, mesh)
+                }
+
+                if assets.topLevelParsed && assets.xModelAssetCount > 0 && mesh != nil {
+                    break
+                }
+            } catch {
+                lastError = error
             }
-        } catch {
-            runtimeStatus = "PLAYABLE / T6 DECODE ERROR"
-            runtimeError = "Native map is playable, but the T6 PS3 payload decoder failed: \(error.localizedDescription)"
         }
+
+        guard let best else {
+            runtimeStatus = "PLAYABLE / T6 DECODE ERROR"
+            runtimeError = "Native map is playable, but no T6 PS3 container decoded successfully: \(lastError?.localizedDescription ?? "unknown decode failure")"
+            return
+        }
+
+        decodedPayloadReport = best.report
+        assetProbeReport = best.assets
+        runtimeMesh = best.mesh
+        decodedSourceName = best.resource.fileName
+        decodedSeed = best.report.payloadPrefix.prefix(256).reduce(0x146) { partial, byte in
+            ((partial &* 16777619) ^ Int(byte)) & 0x7fffffff
+        }
+
+        if best.mesh != nil {
+            runtimeStatus = "T6 MESH CANDIDATE LOADED"
+            runtimeError = nil
+        } else if best.assets.topLevelParsed {
+            runtimeStatus = "T6 XASSET INDEX READY"
+            runtimeError = nil
+        } else if best.report.isUsable {
+            runtimeStatus = best.assets.candidateAssetCount > 0 ? "T6 ASSET SCAN READY" : "PLAYABLE + T6 DECODE"
+            runtimeError = nil
+        } else {
+            runtimeStatus = best.report.status
+            runtimeError = best.report.firstError
+        }
+    }
+
+    private func decodeCandidates() -> [TranzitLoadedResource] {
+        let ff = sharedContainers.filter { $0.fileName.lowercased().hasSuffix(".ff") }
+        let preferred = ff.sorted { lhs, rhs in
+            let lp = decodePriority(lhs.fileName)
+            let rp = decodePriority(rhs.fileName)
+            if lp != rp { return lp < rp }
+            return lhs.byteCount > rhs.byteCount
+        }
+        return [loadedArea.fastFile] + preferred
+    }
+
+    private func decodePriority(_ name: String) -> Int {
+        let lower = name.lowercased()
+        if lower == "zm_transit.ff" { return 0 }
+        if lower == "common_zm.ff" { return 1 }
+        if lower.contains("zm_transit") { return 2 }
+        if lower.contains("common") && lower.contains("zm") { return 3 }
+        return 4
+    }
+
+    private func decodeScore(report: T6DecodedPayloadReport, assets: T6ZoneAssetProbeReport, mesh: T6RuntimeMesh?) -> Int {
+        var score = 0
+        if report.isUsable { score += 100 }
+        score += min(200, report.decodedChunkCount)
+        score += assets.topLevelParsed ? 2_000 : 0
+        score += min(5_000, assets.topLevelAssetCount / 10)
+        score += min(2_000, assets.xModelAssetCount * 10)
+        score += min(500, assets.candidateAssetCount)
+        if let mesh { score += 10_000 + min(2_000, mesh.triangleCount) }
+        return score
     }
 
     private func controlZone(isMove: Bool) -> some View {
