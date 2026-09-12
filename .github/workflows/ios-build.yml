@@ -11,6 +11,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: zombies-ios-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: macos-latest
@@ -138,8 +142,7 @@ jobs:
           import os, subprocess
           try:
               p=subprocess.run(['xcrun','simctl','spawn',os.environ['DEVICE_UDID'],'log','show','--style','compact','--last','30s','--predicate','process == "ZombiesIOS"'], text=True, capture_output=True, timeout=20)
-              print(p.stdout[-200000:])
-              print(p.stderr[-20000:])
+              print(p.stdout[-200000:]); print(p.stderr[-20000:])
           except Exception as e:
               print('log capture failed:', e)
           PY
@@ -156,8 +159,7 @@ jobs:
           retention-days: 30
 
       - name: Build unsigned device app
-        run: |
-          xcodebuild -project ZombiesIOS.xcodeproj -scheme ZombiesIOS -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+        run: xcodebuild -project ZombiesIOS.xcodeproj -scheme ZombiesIOS -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
 
       - name: Verify compiled Tranzit decoder path
         shell: bash
@@ -165,8 +167,7 @@ jobs:
           set -euo pipefail
           APP_PATH="$(find build/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -print -quit)"
           test -n "$APP_PATH"
-          EXECUTABLE="$APP_PATH/ZombiesIOS"
-          test -f "$EXECUTABLE"
+          EXECUTABLE="$APP_PATH/ZombiesIOS"; test -f "$EXECUTABLE"
           STRINGS_FILE="$(mktemp)"; trap 'rm -f "$STRINGS_FILE"' EXIT
           strings "$EXECUTABLE" > "$STRINGS_FILE"
           grep -Fq 'TRANZIT GFXWORLD DECODE' "$STRINGS_FILE"
