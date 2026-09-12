@@ -33,6 +33,26 @@ class ContentAuditTests(unittest.TestCase):
             p.write_text("struct Example {}")
             self.assertEqual(scan_tree(Path(td), set()), [])
 
+    def test_external_folder_services_do_not_copy_game_data(self):
+        root = Path(__file__).resolve().parents[2]
+        files = [
+            root / "Sources/ZombiesIOS/Services/DirectFolderImporter.swift",
+            root / "Sources/ZombiesIOS/Services/ExternalGameFolderStore.swift",
+        ]
+        for path in files:
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn("copyItem(", text)
+            self.assertNotIn("replaceItemAt(", text)
+            self.assertNotIn("Data(contentsOf:", text)
+
+    def test_runtime_cache_policy_separates_metadata_and_expressive_cache(self):
+        root = Path(__file__).resolve().parents[2]
+        path = root / "Sources/ZombiesIOS/Services/RuntimeCachePolicy.swift"
+        text = path.read_text(encoding="utf-8")
+        self.assertIn('appendingPathComponent("metadata", isDirectory: true)', text)
+        self.assertIn('appendingPathComponent("runtime-expressive-cache", isDirectory: true)', text)
+        self.assertNotIn('Bundle.main', text)
+
 
 if __name__ == "__main__":
     unittest.main()
