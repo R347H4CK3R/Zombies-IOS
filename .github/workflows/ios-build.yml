@@ -26,6 +26,9 @@ jobs:
       - name: Test redistribution content audit
         run: python3 -m unittest Tools.tests.test_content_audit -v
 
+      - name: Test T6 GfxSurface layout
+        run: python3 -m unittest Tools.tests.test_t6_gfxsurface_layout -v
+
       - name: Prepare CI visual test environment
         run: |
           python3 -m venv .venv
@@ -71,10 +74,11 @@ jobs:
           grep -Fq 'mesh != nil { score += 50_000 }' "$GAMEPLAY"
           if grep -Fq 'T6MeshPreviewExtractor.extract' "$GAMEPLAY"; then exit 1; fi
           if grep -Fq 'buildFallbackArena' "$SCENE"; then exit 1; fi
-          grep -Fq 'firstVertex = Int(Int32(bitPattern: be32(bytes, offset + 0x1C)))' "$EXTRACTOR"
-          grep -Fq 'vertexCount = Int(be16(bytes, offset + 0x20))' "$EXTRACTOR"
-          grep -Fq 'triCount = Int(be16(bytes, offset + 0x22))' "$EXTRACTOR"
-          grep -Fq 'baseIndex = Int(Int32(bitPattern: be32(bytes, offset + 0x24)))' "$EXTRACTOR"
+          grep -Fq 'firstVertex = Int(Int32(bitPattern: be32(bytes, offset + 0x20)))' "$EXTRACTOR"
+          grep -Fq 'himipRadiusInvSq = beFloat(bytes, offset + 0x24)' "$EXTRACTOR"
+          grep -Fq 'vertexCount = Int(be16(bytes, offset + 0x28))' "$EXTRACTOR"
+          grep -Fq 'triCount = Int(be16(bytes, offset + 0x2A))' "$EXTRACTOR"
+          grep -Fq 'baseIndex = Int(Int32(bitPattern: be32(bytes, offset + 0x2C)))' "$EXTRACTOR"
           grep -Fq 'GFXWORLD:BE REAL' "$EXTRACTOR"
 
       - name: Install XcodeGen
