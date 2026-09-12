@@ -56,3 +56,4 @@ verifier-pipefail-fix 2026-09-11T22:24:00-05:00
 clean-content-boundary 2026-09-11T22:38:30-05:00
 real-tranzit-surface-fallback 2026-09-11T22:52:00-05:00
 strict-gfxworld-source-layout 2026-09-11T23:05:00-05:00
+simulator-gated-build 2026-09-11T23:16:00-05:00
