@@ -119,6 +119,19 @@ class ConvertedAssetArchitectureTests(unittest.TestCase):
         self.assertNotIn("T6GfxSurfaceMeshExtractor", loader)
         self.assertNotIn("zm_transit.ff", loader)
 
+    def test_converted_scene_renderer_uses_native_package_assets(self):
+        renderer = (ROOT / "Sources/ZombiesIOS/Views/ConvertedTranzitSceneView.swift").read_text()
+        self.assertIn("ConvertedRuntimePackage", renderer)
+        self.assertIn("package.worldMesh", renderer)
+        self.assertIn("package.weaponMesh", renderer)
+        self.assertIn("package.materialManifest", renderer)
+        self.assertIn("textureURL", renderer)
+        self.assertIn("SCNGeometrySource", renderer)
+        self.assertIn("SCNPhysicsBody", renderer)
+        self.assertNotIn("T6PS3PayloadDecoder", renderer)
+        self.assertNotIn("T6GfxSurfaceMeshExtractor", renderer)
+        self.assertNotIn("zm_transit.ff", renderer)
+
 
 if __name__ == "__main__":
     unittest.main()
