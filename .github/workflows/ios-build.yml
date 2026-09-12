@@ -110,6 +110,11 @@ jobs:
           stext = re.sub(fallback_pattern, r'\1', stext, count=1)
           scene.write_text(stext)
 
+          stale_gate = 'No GfxWorld asset exists in the decoded T6 XAsset index.'
+          swift_sources = '\n'.join(
+              p.read_text(errors='ignore') for p in Path('Sources').rglob('*.swift')
+          )
+
           # Fail here with explicit messages instead of opaque grep exit codes.
           checks = {
               'Tranzit decode budget': '128 * 1024 * 1024' in text,
@@ -122,6 +127,7 @@ jobs:
               '4-byte surface phase scan': 'offset += 4' in etext,
               'tail validation removed': 'let b0 = SIMD3<Float>(beFloat(bytes, offset + 56)' not in etext,
               'real GfxWorld output': 'GFXWORLD:BE REAL' in etext,
+              'stale XAsset GfxWorld gate absent from Swift source': stale_gate not in swift_sources,
           }
           failed = [name for name, ok in checks.items() if not ok]
           if failed:
@@ -148,6 +154,27 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             build
+
+      - name: Verify compiled Tranzit decoder path
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find build/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$APP_PATH"
+          EXECUTABLE="$APP_PATH/ZombiesIOS"
+          test -f "$EXECUTABLE"
+
+          if strings "$EXECUTABLE" | grep -Fq 'No GfxWorld asset exists in the decoded T6 XAsset index.'; then
+            echo '::error::Compiled app still contains the obsolete GfxWorld XAsset-index fatal gate.'
+            exit 1
+          fi
+
+          strings "$EXECUTABLE" | grep -Fq 'TRANZIT GFXWORLD DECODE' || {
+            echo '::error::Compiled app does not contain the direct Tranzit GfxWorld decode path.'
+            exit 1
+          }
+
+          echo 'Compiled decoder verification passed: obsolete gate absent, direct GfxWorld path present.'
 
       - name: Package IPA
         run: |
