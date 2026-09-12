@@ -76,6 +76,69 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
+      - name: Build iPhone Simulator app
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project ZombiesIOS.xcodeproj \
+            -scheme ZombiesIOS \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/SimulatorDerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Boot iPhone Simulator and smoke-test app
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUNDLE_ID='com.r347h4ck3r.zombiesios'
+          APP_PATH="$(find build/SimulatorDerivedData/Build/Products/Debug-iphonesimulator -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$APP_PATH"
+
+          DEVICE_UDID="$(xcrun simctl list devices available -j | python3 -c '
+          import json,sys
+          data=json.load(sys.stdin)
+          for runtime, devices in data.get("devices", {}).items():
+              for d in reversed(devices):
+                  if d.get("isAvailable") and d.get("name", "").startswith("iPhone"):
+                      print(d["udid"])
+                      raise SystemExit(0)
+          raise SystemExit("No available iPhone Simulator found")
+          ')"
+
+          xcrun simctl boot "$DEVICE_UDID" 2>/dev/null || true
+          open -a Simulator --args -CurrentDeviceUDID "$DEVICE_UDID" || true
+          xcrun simctl bootstatus "$DEVICE_UDID" -b
+          xcrun simctl install "$DEVICE_UDID" "$APP_PATH"
+
+          LAUNCH_OUTPUT="$(xcrun simctl launch "$DEVICE_UDID" "$BUNDLE_ID" 2>&1)"
+          echo "$LAUNCH_OUTPUT"
+          echo "$LAUNCH_OUTPUT" | grep -Eq "$BUNDLE_ID: [0-9]+"
+
+          sleep 10
+          mkdir -p build/simulator-smoke
+          xcrun simctl io "$DEVICE_UDID" screenshot build/simulator-smoke/launch.png
+
+          # A second launch must still succeed. If the first launch crashed immediately,
+          # simctl reports the failure here instead of silently shipping the IPA.
+          RELAUNCH_OUTPUT="$(xcrun simctl launch "$DEVICE_UDID" "$BUNDLE_ID" 2>&1)"
+          echo "$RELAUNCH_OUTPUT"
+          echo "$RELAUNCH_OUTPUT" | grep -Eq "$BUNDLE_ID: [0-9]+"
+
+          xcrun simctl terminate "$DEVICE_UDID" "$BUNDLE_ID" || true
+          xcrun simctl shutdown "$DEVICE_UDID" || true
+
+      - name: Upload Simulator smoke-test evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZombiesIOS-simulator-smoke
+          path: build/simulator-smoke/launch.png
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Build unsigned device app
         run: |
           xcodebuild \
@@ -151,5 +214,5 @@ jobs:
             gh release create latest-build ZombiesIOS-unsigned.ipa \
               --target "$GITHUB_SHA" \
               --title "Latest ZombiesIOS IPA" \
-              --notes "Unsigned iOS build with strict source-level PS3 GfxWorld decoding. Sign before installing on iPhone."
+              --notes "Unsigned iOS build that passed automated iPhone Simulator startup smoke testing and strict source-level PS3 GfxWorld validation. Sign before installing on iPhone."
           fi
