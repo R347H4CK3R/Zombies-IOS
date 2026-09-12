@@ -278,7 +278,7 @@ struct TranzitTouchGameplayView: View {
                 let analysis = await Task.detached(priority: .userInitiated) { () -> (T6ZoneAssetProbeReport, T6RuntimeMesh?) in
                     let assets = T6ZoneAssetProbe.analyze(payload)
                     let mesh = T6GfxSurfaceMeshExtractor.extract(from: payload, scanLimit: payload.count)
-                        ?? T6MeshPreviewExtractor.extract(from: payload, scanLimit: payload.count)
+                        ?? T6GfxBoundsFallbackExtractor.extract(from: payload, scanLimit: payload.count)
                     return (assets, mesh)
                 }.value
                 let assets = analysis.0
