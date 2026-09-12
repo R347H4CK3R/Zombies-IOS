@@ -95,7 +95,8 @@ class ConvertedAssetArchitectureTests(unittest.TestCase):
         for stage in ["scanning", "decodingWorld", "convertingGeometry", "convertingTextures", "buildingCollision", "convertingWeapon", "validating", "ready"]:
             self.assertIn(stage, importer)
         self.assertIn("ConvertedSourceFingerprint.make", importer)
-        self.assertIn("staging-state.json", importer)
+        self.assertIn("ConvertedStagingState.fileName", importer)
+        self.assertIn("staging-state.json", report)
         self.assertIn("beginStaging", importer)
         self.assertIn("promoteStaging", importer)
         self.assertIn("manifest.json", importer)
