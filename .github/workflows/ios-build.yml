@@ -14,6 +14,7 @@ permissions:
 jobs:
   build:
     runs-on: macos-latest
+    timeout-minutes: 25
 
     steps:
       - uses: actions/checkout@v4
@@ -60,19 +61,12 @@ jobs:
           GAMEPLAY='Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift'
           EXTRACTOR='Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift'
           SCENE='Sources/ZombiesIOS/Views/NativeFPSSceneView.swift'
-
           grep -Fq '128 * 1024 * 1024' "$GAMEPLAY"
           grep -Fq 'TRANZIT GFXWORLD DECODE' "$GAMEPLAY"
           grep -Fq 'T6GfxSurfaceMeshExtractor.extract' "$GAMEPLAY"
           grep -Fq 'mesh != nil { score += 50_000 }' "$GAMEPLAY"
-          if grep -Fq 'T6MeshPreviewExtractor.extract' "$GAMEPLAY"; then
-            echo '::error::Preview mesh fallback is still wired into gameplay.'
-            exit 1
-          fi
-          if grep -Fq 'buildFallbackArena' "$SCENE"; then
-            echo '::error::Synthetic fallback arena is still compiled into the production scene.'
-            exit 1
-          fi
+          if grep -Fq 'T6MeshPreviewExtractor.extract' "$GAMEPLAY"; then exit 1; fi
+          if grep -Fq 'buildFallbackArena' "$SCENE"; then exit 1; fi
           grep -Fq 'firstVertex = Int(Int32(bitPattern: be32(bytes, offset + 0x1C)))' "$EXTRACTOR"
           grep -Fq 'vertexCount = Int(be16(bytes, offset + 0x20))' "$EXTRACTOR"
           grep -Fq 'triCount = Int(be16(bytes, offset + 0x22))' "$EXTRACTOR"
@@ -89,17 +83,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          xcodebuild \
-            -project ZombiesIOS.xcodeproj \
-            -scheme ZombiesIOS \
-            -configuration Debug \
-            -sdk iphonesimulator \
-            -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath build/SimulatorDerivedData \
-            CODE_SIGNING_ALLOWED=NO \
-            build
+          xcodebuild -project ZombiesIOS.xcodeproj -scheme ZombiesIOS -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build/SimulatorDerivedData CODE_SIGNING_ALLOWED=NO build
 
       - name: Boot iPhone Simulator and validate gameplay rendering
+        timeout-minutes: 5
         shell: bash
         run: |
           set -euo pipefail
@@ -115,14 +102,11 @@ jobs:
           for runtime, devices in data.get('devices', {}).items():
               for d in devices:
                   if d.get('isAvailable') and d.get('name','').startswith('iPhone'):
-                      score = 2 if ('Plus' in d['name'] or 'Pro Max' in d['name']) else 1
+                      score = 3 if '16 Plus' in d['name'] else (2 if ('Plus' in d['name'] or 'Pro Max' in d['name']) else 1)
                       candidates.append((score, runtime, d['name'], d['udid']))
-          if not candidates:
-              raise SystemExit('No available iPhone Simulator found')
+          if not candidates: raise SystemExit('No available iPhone Simulator found')
           score,runtime,name,udid=sorted(candidates, reverse=True)[0]
-          print(udid)
-          print(name)
-          print(runtime)
+          print(udid); print(name); print(runtime)
           PY
 
           DEVICE_UDID="$(sed -n '1p' build/ci-gameplay/selected-device.txt)"
@@ -131,7 +115,10 @@ jobs:
           printf 'name=%s\nudid=%s\nruntime=%s\n' "$DEVICE_NAME" "$DEVICE_UDID" "$DEVICE_RUNTIME" > build/ci-gameplay/simulator-metadata.txt
 
           xcrun simctl boot "$DEVICE_UDID" 2>/dev/null || true
-          xcrun simctl bootstatus "$DEVICE_UDID" -b
+          DEVICE_UDID="$DEVICE_UDID" python3 - <<'PY'
+          import os, subprocess
+          subprocess.run(['xcrun','simctl','bootstatus',os.environ['DEVICE_UDID'],'-b'], check=True, timeout=120)
+          PY
           xcrun simctl install "$DEVICE_UDID" "$APP_PATH"
           LAUNCH_OUTPUT="$(xcrun simctl launch "$DEVICE_UDID" "$BUNDLE_ID" --ci-gameplay-validation 2>&1)"
           echo "$LAUNCH_OUTPUT" | tee build/ci-gameplay/launch-output.txt
@@ -145,13 +132,17 @@ jobs:
           test -f "$DATA_CONTAINER/Documents/ci-render-diagnostics.json"
           cp "$DATA_CONTAINER/Documents/ci-render-diagnostics.json" build/ci-gameplay/ci-render-diagnostics.json
 
-          .venv/bin/python Tools/ci_visual_validate.py \
-            --screenshot-1 build/ci-gameplay/gameplay-1.png \
-            --screenshot-2 build/ci-gameplay/gameplay-2.png \
-            --diagnostics build/ci-gameplay/ci-render-diagnostics.json \
-            --report build/ci-gameplay/visual-report.json
+          .venv/bin/python Tools/ci_visual_validate.py --screenshot-1 build/ci-gameplay/gameplay-1.png --screenshot-2 build/ci-gameplay/gameplay-2.png --diagnostics build/ci-gameplay/ci-render-diagnostics.json --report build/ci-gameplay/visual-report.json
 
-          xcrun simctl spawn "$DEVICE_UDID" log show --style compact --last 2m --predicate 'process == "ZombiesIOS"' > build/ci-gameplay/simulator.log 2>&1 || true
+          DEVICE_UDID="$DEVICE_UDID" python3 - <<'PY' > build/ci-gameplay/simulator.log 2>&1 || true
+          import os, subprocess
+          try:
+              p=subprocess.run(['xcrun','simctl','spawn',os.environ['DEVICE_UDID'],'log','show','--style','compact','--last','30s','--predicate','process == "ZombiesIOS"'], text=True, capture_output=True, timeout=20)
+              print(p.stdout[-200000:])
+              print(p.stderr[-20000:])
+          except Exception as e:
+              print('log capture failed:', e)
+          PY
           xcrun simctl terminate "$DEVICE_UDID" "$BUNDLE_ID" || true
           xcrun simctl shutdown "$DEVICE_UDID" || true
 
@@ -166,17 +157,7 @@ jobs:
 
       - name: Build unsigned device app
         run: |
-          xcodebuild \
-            -project ZombiesIOS.xcodeproj \
-            -scheme ZombiesIOS \
-            -configuration Release \
-            -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath build/DerivedData \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            build
+          xcodebuild -project ZombiesIOS.xcodeproj -scheme ZombiesIOS -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
 
       - name: Verify compiled Tranzit decoder path
         shell: bash
@@ -186,14 +167,10 @@ jobs:
           test -n "$APP_PATH"
           EXECUTABLE="$APP_PATH/ZombiesIOS"
           test -f "$EXECUTABLE"
-          STRINGS_FILE="$(mktemp)"
-          trap 'rm -f "$STRINGS_FILE"' EXIT
+          STRINGS_FILE="$(mktemp)"; trap 'rm -f "$STRINGS_FILE"' EXIT
           strings "$EXECUTABLE" > "$STRINGS_FILE"
           grep -Fq 'TRANZIT GFXWORLD DECODE' "$STRINGS_FILE"
-          if grep -Fq 'Full-map geometry was not selected yet' "$STRINGS_FILE"; then
-            echo '::error::Compiled app still contains the old temporary geometry fallback.'
-            exit 1
-          fi
+          if grep -Fq 'Full-map geometry was not selected yet' "$STRINGS_FILE"; then exit 1; fi
 
       - name: Audit built app for non-redistributable content
         shell: bash
@@ -207,9 +184,7 @@ jobs:
         run: |
           APP_PATH="$(find build/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -print -quit)"
           test -n "$APP_PATH"
-          rm -rf Payload
-          mkdir Payload
-          cp -R "$APP_PATH" Payload/
+          rm -rf Payload; mkdir Payload; cp -R "$APP_PATH" Payload/
           /usr/bin/zip -qry ZombiesIOS-unsigned.ipa Payload
           rm -rf Payload
           ls -lh ZombiesIOS-unsigned.ipa
@@ -230,8 +205,5 @@ jobs:
           if gh release view latest-build >/dev/null 2>&1; then
             gh release upload latest-build ZombiesIOS-unsigned.ipa --clobber
           else
-            gh release create latest-build ZombiesIOS-unsigned.ipa \
-              --target "$GITHUB_SHA" \
-              --title "Latest ZombiesIOS IPA" \
-              --notes "Unsigned iOS build that passed automated CI gameplay rendering validation. Sign before installing on iPhone."
+            gh release create latest-build ZombiesIOS-unsigned.ipa --target "$GITHUB_SHA" --title "Latest ZombiesIOS IPA" --notes "Unsigned iOS build that passed automated CI gameplay rendering validation. Sign before installing on iPhone."
           fi
