@@ -15,7 +15,7 @@ struct ConvertedFloat3: Codable, Equatable {
 }
 
 struct ConvertedTranzitManifest: Codable {
-    static let packageFormatVersion = 1
+    static let packageFormatVersion = 2
 
     let formatVersion: Int
     let sourceFingerprint: ConvertedSourceFingerprint
