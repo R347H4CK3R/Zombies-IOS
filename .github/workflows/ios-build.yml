@@ -1,10 +1,9 @@
-# Manual build plus CI gameplay-validation branch.
 name: Build iOS IPA
 
 on:
   workflow_dispatch:
   push:
-    branches: [ main, ci-gameplay-validation-final ]
+    branches: [ main, ci-gameplay-validation-final, converted-tranzit-assets ]
     paths:
       - '.github/build-trigger.txt'
 
@@ -18,68 +17,52 @@ concurrency:
 jobs:
   build:
     runs-on: macos-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Test redistribution content audit
-        run: python3 -m unittest Tools.tests.test_content_audit -v
-
-      - name: Test T6 GfxSurface layout
-        run: python3 -m unittest Tools.tests.test_t6_gfxsurface_layout -v
+      - name: Run source tests
+        run: |
+          python3 -m unittest Tools.tests.test_content_audit -v
+          python3 -m unittest Tools.tests.test_t6_gfxsurface_layout -v
+          python3 -m unittest Tools.tests.test_converted_asset_architecture -v
+          python3 -m unittest Tools.tests.test_converted_production_routing -v
+          python3 -m unittest Tools.tests.test_converted_ci_route -v
 
       - name: Prepare CI visual test environment
         run: |
           python3 -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
           .venv/bin/python -m pip install pillow
-
-      - name: Test CI visual validator
-        run: .venv/bin/python -m unittest Tools.tests.test_ci_visual_validate -v
+          .venv/bin/python -m unittest Tools.tests.test_ci_visual_validate -v
 
       - name: Audit source tree for non-redistributable content
         run: python3 Tools/content_audit.py . --allowlist Tools/content_allowlist.txt
 
-      - name: Validate runtime source boundary
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift
-          test -f Sources/ZombiesIOS/Services/ExternalGameFolderStore.swift
-          test -f Sources/ZombiesIOS/Services/RuntimeCachePolicy.swift
-          test -f Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift
-          test -f Sources/ZombiesIOS/Views/NativeFPSSceneView.swift
-          test -f Sources/ZombiesIOS/Support/CIValidationMode.swift
-          test -f Sources/ZombiesIOS/Support/CIRuntimeMeshFixture.swift
-          test -f Sources/ZombiesIOS/Support/CIRenderDiagnostics.swift
-          test -f Sources/ZombiesIOS/Views/CIGameplayValidationEntryView.swift
-          grep -Fq -- '--ci-gameplay-validation' Sources/ZombiesIOS/Support/CIValidationMode.swift
-          grep -Fq 'ZOMBIESIOS_CI_GAMEPLAY' Sources/ZombiesIOS/Support/CIValidationMode.swift
-          grep -Fq 'CIValidationMode.isEnabled' Sources/ZombiesIOS/ZombiesIOSApp.swift
-          grep -Fq 'ContentView()' Sources/ZombiesIOS/ZombiesIOSApp.swift
-          grep -Fq 'Choose BO2 Game Folder' Sources/ZombiesIOS/ContentView.swift
-          grep -Fq 'CI-FIXTURE' Sources/ZombiesIOS/Support/CIRuntimeMeshFixture.swift
-
-      - name: Validate Tranzit GfxWorld path
+      - name: Validate converted production boundary
         shell: bash
         run: |
           set -euo pipefail
           GAMEPLAY='Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift'
-          EXTRACTOR='Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift'
-          SCENE='Sources/ZombiesIOS/Views/NativeFPSSceneView.swift'
-          grep -Fq '128 * 1024 * 1024' "$GAMEPLAY"
-          grep -Fq 'TRANZIT GFXWORLD DECODE' "$GAMEPLAY"
-          grep -Fq 'T6GfxSurfaceMeshExtractor.extract' "$GAMEPLAY"
-          grep -Fq 'mesh != nil { score += 50_000 }' "$GAMEPLAY"
-          if grep -Fq 'T6MeshPreviewExtractor.extract' "$GAMEPLAY"; then exit 1; fi
-          if grep -Fq 'buildFallbackArena' "$SCENE"; then exit 1; fi
-          grep -Fq 'firstVertex = Int(Int32(bitPattern: be32(bytes, offset + 0x20)))' "$EXTRACTOR"
-          grep -Fq 'himipRadiusInvSq = beFloat(bytes, offset + 0x24)' "$EXTRACTOR"
-          grep -Fq 'vertexCount = Int(be16(bytes, offset + 0x28))' "$EXTRACTOR"
-          grep -Fq 'triCount = Int(be16(bytes, offset + 0x2A))' "$EXTRACTOR"
-          grep -Fq 'baseIndex = Int(Int32(bitPattern: be32(bytes, offset + 0x2C)))' "$EXTRACTOR"
-          grep -Fq 'GFXWORLD:BE REAL' "$EXTRACTOR"
+          IMPORT='Sources/ZombiesIOS/ConvertedAssets/ConvertedTranzitImporter.swift'
+          LOADER='Sources/ZombiesIOS/ConvertedAssets/ConvertedTranzitLoader.swift'
+          SCENE='Sources/ZombiesIOS/Views/ConvertedTranzitSceneView.swift'
+          ROUTE='Sources/ZombiesIOS/Views/ConvertedTranzitImportView.swift'
+          PATHS='Sources/ZombiesIOS/ConvertedAssets/ConvertedTranzitPaths.swift'
+
+          test -f "$IMPORT"; test -f "$LOADER"; test -f "$SCENE"; test -f "$ROUTE"
+          grep -Fq 'ConvertedTranzitImporter' "$IMPORT"
+          grep -Fq 'ConvertedTranzitLoader' "$LOADER"
+          grep -Fq 'ConvertedTranzitSceneView' "$GAMEPLAY"
+          grep -Fq 'ConvertedTranzit' "$PATHS"
+          grep -Fq 'applicationSupportDirectory' "$PATHS"
+
+          if grep -Fq 'T6PS3PayloadDecoder()' "$GAMEPLAY"; then exit 1; fi
+          if grep -Fq 'T6GfxSurfaceMeshExtractor.extract' "$GAMEPLAY"; then exit 1; fi
+          if grep -Fq 'TRANZIT GFXWORLD DECODE' "$GAMEPLAY"; then exit 1; fi
+          if grep -Fq 'NativeFPSSceneView' "$GAMEPLAY"; then exit 1; fi
+          if grep -Fq 'decodeT6Payload' "$GAMEPLAY"; then exit 1; fi
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -93,8 +76,8 @@ jobs:
           set -euo pipefail
           xcodebuild -project ZombiesIOS.xcodeproj -scheme ZombiesIOS -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build/SimulatorDerivedData CODE_SIGNING_ALLOWED=NO build
 
-      - name: Boot iPhone 17 Simulator and validate gameplay rendering
-        timeout-minutes: 7
+      - name: Boot exact iPhone 17 and validate converted rendering
+        timeout-minutes: 8
         shell: bash
         run: |
           set -euo pipefail
@@ -104,24 +87,19 @@ jobs:
           mkdir -p build/ci-gameplay
 
           python3 - <<'PY' > build/ci-gameplay/selected-device.txt
-          import json, subprocess
+          import json, subprocess, sys
           data=json.loads(subprocess.check_output(['xcrun','simctl','list','devices','available','-j']))
-          matches=[]
-          all_iphones=[]
+          matches=[]; iphones=[]
           for runtime, devices in data.get('devices', {}).items():
               for d in devices:
-                  if not d.get('isAvailable'):
-                      continue
+                  if not d.get('isAvailable'): continue
                   name=d.get('name','')
                   if name.startswith('iPhone'):
-                      all_iphones.append((runtime,name,d['udid']))
-                      if name == 'iPhone 17':
-                          matches.append((runtime,name,d['udid']))
+                      iphones.append((runtime,name,d['udid']))
+                      if name == 'iPhone 17': matches.append((runtime,name,d['udid']))
           if not matches:
-              print('Available iPhone simulators:', file=__import__('sys').stderr)
-              for runtime,name,udid in all_iphones:
-                  print(f'  {name} | {runtime} | {udid}', file=__import__('sys').stderr)
-              raise SystemExit('Required iPhone 17 Simulator is not installed on this runner')
+              for runtime,name,udid in iphones: print(f'{name} | {runtime} | {udid}', file=sys.stderr)
+              raise SystemExit('Required exact iPhone 17 Simulator is not installed')
           runtime,name,udid=sorted(matches, reverse=True)[0]
           print(udid); print(name); print(runtime)
           PY
@@ -129,7 +107,7 @@ jobs:
           DEVICE_UDID="$(sed -n '1p' build/ci-gameplay/selected-device.txt)"
           DEVICE_NAME="$(sed -n '2p' build/ci-gameplay/selected-device.txt)"
           DEVICE_RUNTIME="$(sed -n '3p' build/ci-gameplay/selected-device.txt)"
-          test "$DEVICE_NAME" = "iPhone 17"
+          test "$DEVICE_NAME" = 'iPhone 17'
           printf 'name=%s\nudid=%s\nruntime=%s\n' "$DEVICE_NAME" "$DEVICE_UDID" "$DEVICE_RUNTIME" > build/ci-gameplay/simulator-metadata.txt
 
           xcrun simctl boot "$DEVICE_UDID" 2>/dev/null || true
@@ -150,24 +128,38 @@ jobs:
           test -f "$DATA_CONTAINER/Documents/ci-render-diagnostics.json"
           cp "$DATA_CONTAINER/Documents/ci-render-diagnostics.json" build/ci-gameplay/ci-render-diagnostics.json
 
-          .venv/bin/python Tools/ci_visual_validate.py --screenshot-1 build/ci-gameplay/gameplay-1.png --screenshot-2 build/ci-gameplay/gameplay-2.png --diagnostics build/ci-gameplay/ci-render-diagnostics.json --report build/ci-gameplay/visual-report.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('build/ci-gameplay/ci-render-diagnostics.json'))
+          assert d['ready'] is True, d
+          assert d['packageFormatVersion'] == 1, d
+          assert d['packagePathClass'] == 'Application Support/ConvertedTranzit', d
+          assert d['convertedTextureCount'] >= 1, d
+          assert d['convertedWeaponVertexCount'] >= 3, d
+          assert d['vertexCount'] >= 3 and d['triangleCount'] >= 1, d
+          PY
+
+          .venv/bin/python Tools/ci_visual_validate.py \
+            --screenshot-1 build/ci-gameplay/gameplay-1.png \
+            --screenshot-2 build/ci-gameplay/gameplay-2.png \
+            --diagnostics build/ci-gameplay/ci-render-diagnostics.json \
+            --report build/ci-gameplay/visual-report.json
 
           DEVICE_UDID="$DEVICE_UDID" python3 - <<'PY' > build/ci-gameplay/simulator.log 2>&1 || true
           import os, subprocess
           try:
               p=subprocess.run(['xcrun','simctl','spawn',os.environ['DEVICE_UDID'],'log','show','--style','compact','--last','30s','--predicate','process == "ZombiesIOS"'], text=True, capture_output=True, timeout=20)
               print(p.stdout[-200000:]); print(p.stderr[-20000:])
-          except Exception as e:
-              print('log capture failed:', e)
+          except Exception as e: print('log capture failed:', e)
           PY
           xcrun simctl terminate "$DEVICE_UDID" "$BUNDLE_ID" || true
           xcrun simctl shutdown "$DEVICE_UDID" || true
 
-      - name: Upload CI gameplay validation evidence
+      - name: Upload converted gameplay validation evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ZombiesIOS-ci-validation-evidence
+          name: ZombiesIOS-converted-validation-evidence
           path: build/ci-gameplay
           if-no-files-found: warn
           retention-days: 30
@@ -175,7 +167,7 @@ jobs:
       - name: Build unsigned device app
         run: xcodebuild -project ZombiesIOS.xcodeproj -scheme ZombiesIOS -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
 
-      - name: Verify compiled Tranzit decoder path
+      - name: Verify compiled converted runtime path
         shell: bash
         run: |
           set -euo pipefail
@@ -184,8 +176,8 @@ jobs:
           EXECUTABLE="$APP_PATH/ZombiesIOS"; test -f "$EXECUTABLE"
           STRINGS_FILE="$(mktemp)"; trap 'rm -f "$STRINGS_FILE"' EXIT
           strings "$EXECUTABLE" > "$STRINGS_FILE"
-          grep -Fq 'TRANZIT GFXWORLD DECODE' "$STRINGS_FILE"
-          if grep -Fq 'Full-map geometry was not selected yet' "$STRINGS_FILE"; then exit 1; fi
+          grep -Fq 'Converted Tranzit package' "$STRINGS_FILE"
+          grep -Fq 'CONVERTED ASSET RUNTIME' "$STRINGS_FILE"
 
       - name: Audit built app for non-redistributable content
         shell: bash
@@ -220,5 +212,5 @@ jobs:
           if gh release view latest-build >/dev/null 2>&1; then
             gh release upload latest-build ZombiesIOS-unsigned.ipa --clobber
           else
-            gh release create latest-build ZombiesIOS-unsigned.ipa --target "$GITHUB_SHA" --title "Latest ZombiesIOS IPA" --notes "Unsigned iOS build that passed automated iPhone 17 Simulator gameplay rendering validation. Sign before installing on iPhone."
+            gh release create latest-build ZombiesIOS-unsigned.ipa --target "$GITHUB_SHA" --title "Latest ZombiesIOS IPA" --notes "Unsigned iOS build gated on converted-package rendering validation."
           fi
