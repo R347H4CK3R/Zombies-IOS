@@ -22,10 +22,11 @@ actor DirectFolderImporter {
 
     private let scanner = PS3DumpScanner()
     private let folderStore = ExternalGameFolderStore()
+    private let dependencyResolver = TranzitDependencyResolver()
 
-    /// Progressive direct-folder import: scan and use the user's original folder
-    /// in place. No BO2 files are copied into Documents, Library, Application
-    /// Support, or any other app-container directory.
+    /// Scans the user's selected dump, remembers the external source folder,
+    /// then copies only manifest-selected Tranzit dependencies into the app's
+    /// local SourceCache for faster repeat launches.
     func importFolder(_ folderURL: URL) async throws -> Result {
         let accessed = folderURL.startAccessingSecurityScopedResource()
         defer {
@@ -40,8 +41,12 @@ actor DirectFolderImporter {
 
         do {
             let report = try await scanner.scan(folderURL: folderURL)
+            let manifest = try await dependencyResolver.initialManifest(sourceRoot: folderURL)
+            let sourceCache = try TranzitSourceCache()
+            _ = try await sourceCache.prepare(manifest: manifest, sourceRoot: folderURL)
             try? folderStore.save(folderURL: folderURL)
-            return Result(report: report, importedAssetsURL: folderURL)
+            let cacheRoot = try RuntimeCachePolicy.tranzitSourceCacheRoot()
+            return Result(report: report, importedAssetsURL: cacheRoot)
         } catch PS3DumpScanner.ScannerError.noManifestMatches {
             throw ImportError.noManifestMatches
         }
