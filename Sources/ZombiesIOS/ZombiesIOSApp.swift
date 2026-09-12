@@ -4,7 +4,11 @@ import SwiftUI
 struct ZombiesIOSApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            if CIValidationMode.isEnabled {
+                CIGameplayValidationEntryView()
+            } else {
+                ContentView()
+            }
         }
     }
 }
