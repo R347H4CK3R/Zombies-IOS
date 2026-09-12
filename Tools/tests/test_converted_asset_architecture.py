@@ -28,6 +28,20 @@ class ConvertedAssetArchitectureTests(unittest.TestCase):
         self.assertIn("indexOutOfRange", mesh)
         self.assertIn("roundTripSelfCheck", mesh)
 
+    def test_transactional_package_store_and_validator_exist(self):
+        validator = (ROOT / "Sources/ZombiesIOS/ConvertedAssets/ConvertedPackageValidator.swift").read_text()
+        store = (ROOT / "Sources/ZombiesIOS/ConvertedAssets/ConvertedPackageStore.swift").read_text()
+        self.assertIn("complete", validator)
+        self.assertIn("packageFormatVersion", validator)
+        self.assertIn("pathTraversal", validator)
+        self.assertIn("collisionBoundsDoNotOverlap", validator)
+        self.assertIn("ConvertedMeshFormat.decode", validator)
+        self.assertIn("beginStaging", store)
+        self.assertIn("promoteStaging", store)
+        self.assertIn("backup", store)
+        self.assertIn("moveItem", store)
+        self.assertIn("activeManifest", store)
+
 
 if __name__ == "__main__":
     unittest.main()
