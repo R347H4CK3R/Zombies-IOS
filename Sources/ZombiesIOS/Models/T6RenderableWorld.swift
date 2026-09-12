@@ -31,7 +31,7 @@ struct T6RenderableMaterial: Hashable, Sendable {
     let isFallback: Bool
 }
 
-struct T6RenderableProp: Hashable, Sendable {
+struct T6RenderableProp: Sendable {
     let modelID: T6AssetID
     let transform: simd_float4x4
 }
