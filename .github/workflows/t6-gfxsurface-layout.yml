@@ -1,0 +1,19 @@
+name: Validate T6 GfxSurface Layout
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift'
+      - 'Sources/ZombiesIOS/Services/T6GfxBoundsFallbackExtractor.swift'
+      - 'Tools/tests/test_t6_gfxsurface_layout.py'
+      - '.github/workflows/t6-gfxsurface-layout.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify T6 srfTriangles layout offsets
+        run: python3 -m unittest Tools.tests.test_t6_gfxsurface_layout -v
