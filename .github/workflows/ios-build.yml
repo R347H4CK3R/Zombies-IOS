@@ -89,7 +89,7 @@ jobs:
           set -euo pipefail
           xcodebuild -project ZombiesIOS.xcodeproj -scheme ZombiesIOS -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build/SimulatorDerivedData CODE_SIGNING_ALLOWED=NO build
 
-      - name: Boot iPhone Simulator and validate gameplay rendering
+      - name: Boot iPhone 17 Simulator and validate gameplay rendering
         timeout-minutes: 5
         shell: bash
         run: |
@@ -102,20 +102,30 @@ jobs:
           python3 - <<'PY' > build/ci-gameplay/selected-device.txt
           import json, subprocess
           data=json.loads(subprocess.check_output(['xcrun','simctl','list','devices','available','-j']))
-          candidates=[]
+          matches=[]
+          all_iphones=[]
           for runtime, devices in data.get('devices', {}).items():
               for d in devices:
-                  if d.get('isAvailable') and d.get('name','').startswith('iPhone'):
-                      score = 3 if '16 Plus' in d['name'] else (2 if ('Plus' in d['name'] or 'Pro Max' in d['name']) else 1)
-                      candidates.append((score, runtime, d['name'], d['udid']))
-          if not candidates: raise SystemExit('No available iPhone Simulator found')
-          score,runtime,name,udid=sorted(candidates, reverse=True)[0]
+                  if not d.get('isAvailable'):
+                      continue
+                  name=d.get('name','')
+                  if name.startswith('iPhone'):
+                      all_iphones.append((runtime,name,d['udid']))
+                      if name == 'iPhone 17':
+                          matches.append((runtime,name,d['udid']))
+          if not matches:
+              print('Available iPhone simulators:', file=__import__('sys').stderr)
+              for runtime,name,udid in all_iphones:
+                  print(f'  {name} | {runtime} | {udid}', file=__import__('sys').stderr)
+              raise SystemExit('Required iPhone 17 Simulator is not installed on this runner')
+          runtime,name,udid=sorted(matches, reverse=True)[0]
           print(udid); print(name); print(runtime)
           PY
 
           DEVICE_UDID="$(sed -n '1p' build/ci-gameplay/selected-device.txt)"
           DEVICE_NAME="$(sed -n '2p' build/ci-gameplay/selected-device.txt)"
           DEVICE_RUNTIME="$(sed -n '3p' build/ci-gameplay/selected-device.txt)"
+          test "$DEVICE_NAME" = "iPhone 17"
           printf 'name=%s\nudid=%s\nruntime=%s\n' "$DEVICE_NAME" "$DEVICE_UDID" "$DEVICE_RUNTIME" > build/ci-gameplay/simulator-metadata.txt
 
           xcrun simctl boot "$DEVICE_UDID" 2>/dev/null || true
@@ -206,5 +216,5 @@ jobs:
           if gh release view latest-build >/dev/null 2>&1; then
             gh release upload latest-build ZombiesIOS-unsigned.ipa --clobber
           else
-            gh release create latest-build ZombiesIOS-unsigned.ipa --target "$GITHUB_SHA" --title "Latest ZombiesIOS IPA" --notes "Unsigned iOS build that passed automated CI gameplay rendering validation. Sign before installing on iPhone."
+            gh release create latest-build ZombiesIOS-unsigned.ipa --target "$GITHUB_SHA" --title "Latest ZombiesIOS IPA" --notes "Unsigned iOS build that passed automated iPhone 17 Simulator gameplay rendering validation. Sign before installing on iPhone."
           fi
