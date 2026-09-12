@@ -16,15 +16,17 @@ Unknown-provenance binary or media content is treated as non-redistributable unt
 
 ## External game-folder workflow
 
-Users select their own compatible game folder through the iOS Files document picker or attached storage exposed through Files. Zombies-IOS stores a bookmark/reference for the selected location and reads required files in place through security-scoped access.
+Users select their own compatible game folder through the iOS Files document picker or attached storage exposed through Files. Zombies-IOS stores a bookmark/reference for the selected location and accesses it through security-scoped access when source files must be scanned or refreshed.
 
-The application must not mirror or bulk-copy the selected game folder into Documents, Library, Application Support, the app bundle, GitHub, or another service.
+The application may copy only manifest-selected Tranzit dependencies from that user-selected source into `Application Support/ZombiesIOS/SourceCache/Tranzit` for local runtime use. The source cache must preserve the selected files' relative paths, validate them by size/hash, skip unchanged files, and remove stale entries that are no longer present in the active manifest.
+
+The application must never mirror or bulk-copy the selected game folder. User-local source-cache content must not be placed in the app bundle, committed to GitHub, uploaded to CI artifacts, exported by default, or attached to releases.
 
 ## Derived data classification
 
 Redistribution-safe metadata includes file hashes, sizes, relative paths, classifications, offsets, compatibility/version information, parser diagnostics, and project-authored indexes that do not reproduce protected expression.
 
-Decoded textures, reconstructed map surfaces, extracted meshes, converted audio, copied scripts, and similar expressive derivatives are user-local runtime data. They belong in the local runtime expressive cache and must not be exported into release artifacts by default.
+Decoded textures, reconstructed map surfaces, extracted meshes, converted audio, copied scripts, and similar expressive derivatives are user-local runtime data. They belong in `Application Support/ZombiesIOS/RuntimeCache/Tranzit` or another explicitly user-local runtime cache and must not be exported into release artifacts by default.
 
 ## Third-party provenance
 
@@ -40,7 +42,7 @@ When the audit fails, remove the prohibited file or establish its provenance and
 
 ## Runtime caches
 
-Metadata and expressive runtime data use separate cache locations. Expressive data generated from user-supplied game files is local-only and may be deleted and regenerated from the external source.
+`SourceCache` and `RuntimeCache` are separate. `SourceCache` contains only manifest-selected copies of user-supplied source files. `RuntimeCache` contains decoded or converted user-local expressive derivatives. Either cache may be deleted and regenerated from the external source, and neither may be included in redistribution artifacts.
 
 ## Contributions
 
