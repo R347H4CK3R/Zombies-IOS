@@ -70,6 +70,14 @@ class ConvertedAssetArchitectureTests(unittest.TestCase):
         self.assertIn("materials/materials.json", importer)
         self.assertIn("fullFidelity", importer)
 
+    def test_collision_conversion_is_separate_and_validated(self):
+        collision = (ROOT / "Sources/ZombiesIOS/ConvertedAssets/ConvertedCollisionImporter.swift").read_text()
+        self.assertIn("world/collision.mesh", collision)
+        self.assertIn("ConvertedMeshFormat.decode", collision)
+        self.assertIn("boundsOverlap", collision)
+        self.assertIn("collisionBoundsDoNotOverlap", collision)
+        self.assertNotIn("SCNPhysicsBody", collision)
+
 
 if __name__ == "__main__":
     unittest.main()
