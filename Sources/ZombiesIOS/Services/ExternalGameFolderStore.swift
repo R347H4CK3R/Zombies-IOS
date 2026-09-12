@@ -70,6 +70,16 @@ struct ExternalGameFolderStore {
         return url
     }
 
+    func withScopedAccess<T>(_ operation: (URL) async throws -> T) async throws -> T {
+        let url = try resolve()
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw StoreError.cannotAccessFolder
+        }
+        return try await operation(url)
+    }
+
     func clear() {
         defaults.removeObject(forKey: key)
     }
