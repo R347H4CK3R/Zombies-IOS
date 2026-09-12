@@ -78,6 +78,17 @@ class ConvertedAssetArchitectureTests(unittest.TestCase):
         self.assertIn("collisionBoundsDoNotOverlap", collision)
         self.assertNotIn("SCNPhysicsBody", collision)
 
+    def test_weapon_conversion_requires_real_source_mesh_and_transform(self):
+        weapon = (ROOT / "Sources/ZombiesIOS/ConvertedAssets/ConvertedWeaponImporter.swift").read_text()
+        self.assertIn("weapons/primary.mesh", weapon)
+        self.assertIn("weapons/primary.material.json", weapon)
+        self.assertIn("firstPersonPosition", weapon)
+        self.assertIn("firstPersonEulerAngles", weapon)
+        self.assertIn("missingSourceMesh", weapon)
+        self.assertIn("ConvertedMeshFormat.encode", weapon)
+        self.assertNotIn("SCNBox", weapon)
+        self.assertNotIn("SCNCylinder", weapon)
+
 
 if __name__ == "__main__":
     unittest.main()
