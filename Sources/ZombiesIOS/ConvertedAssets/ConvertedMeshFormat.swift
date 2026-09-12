@@ -8,19 +8,37 @@ struct ConvertedMaterialGroup: Equatable {
 
 struct ConvertedMesh: Equatable {
     let positions: [SIMD3<Float>]
+    let texCoords: [SIMD2<Float>]
     let indices: [UInt32]
     let boundsMin: SIMD3<Float>
     let boundsMax: SIMD3<Float>
     let materialGroups: [ConvertedMaterialGroup]
+
+    init(
+        positions: [SIMD3<Float>],
+        texCoords: [SIMD2<Float>] = [],
+        indices: [UInt32],
+        boundsMin: SIMD3<Float>,
+        boundsMax: SIMD3<Float>,
+        materialGroups: [ConvertedMaterialGroup]
+    ) {
+        self.positions = positions
+        self.texCoords = texCoords
+        self.indices = indices
+        self.boundsMin = boundsMin
+        self.boundsMax = boundsMax
+        self.materialGroups = materialGroups
+    }
 }
 
 struct ConvertedMeshHeader {
     static let magic: UInt32 = 0x5A4D5348 // ZMSH
-    static let formatVersion: UInt16 = 1
+    static let formatVersion: UInt16 = 2
     static let vertexStride: UInt16 = 12
     static let indexWidth: UInt16 = 4
 
     let vertexCount: UInt32
+    let textureCoordinateCount: UInt32
     let indexCount: UInt32
     let materialGroupCount: UInt16
     let boundsMin: SIMD3<Float>
@@ -35,6 +53,8 @@ enum ConvertedMeshFormatError: Error {
     case truncated
     case emptyMesh
     case nonFiniteVertex
+    case nonFiniteTextureCoordinate
+    case invalidTextureCoordinateCount
     case invalidBounds
     case indexOutOfRange
     case invalidMaterialGroup
@@ -47,6 +67,12 @@ enum ConvertedMeshFormat {
         }
         guard mesh.positions.allSatisfy({ $0.x.isFinite && $0.y.isFinite && $0.z.isFinite }) else {
             throw ConvertedMeshFormatError.nonFiniteVertex
+        }
+        guard mesh.texCoords.isEmpty || mesh.texCoords.count == mesh.positions.count else {
+            throw ConvertedMeshFormatError.invalidTextureCoordinateCount
+        }
+        guard mesh.texCoords.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else {
+            throw ConvertedMeshFormatError.nonFiniteTextureCoordinate
         }
         guard finite(mesh.boundsMin), finite(mesh.boundsMax),
               mesh.boundsMin.x <= mesh.boundsMax.x,
@@ -74,6 +100,7 @@ enum ConvertedMeshFormat {
         append(ConvertedMeshHeader.formatVersion, to: &data)
         append(ConvertedMeshHeader.vertexStride, to: &data)
         append(UInt32(mesh.positions.count), to: &data)
+        append(UInt32(mesh.texCoords.count), to: &data)
         append(UInt32(mesh.indices.count), to: &data)
         append(ConvertedMeshHeader.indexWidth, to: &data)
         append(UInt16(mesh.materialGroups.count), to: &data)
@@ -81,6 +108,7 @@ enum ConvertedMeshFormat {
         append(mesh.boundsMax, to: &data)
 
         for position in mesh.positions { append(position, to: &data) }
+        for texCoord in mesh.texCoords { append(texCoord, to: &data) }
         for index in mesh.indices { append(index, to: &data) }
         for group in mesh.materialGroups {
             append(group.materialID, to: &data)
@@ -99,6 +127,7 @@ enum ConvertedMeshFormat {
         let stride: UInt16 = try read(from: data, cursor: &cursor)
         guard stride == ConvertedMeshHeader.vertexStride else { throw ConvertedMeshFormatError.invalidVertexStride }
         let vertexCount: UInt32 = try read(from: data, cursor: &cursor)
+        let textureCoordinateCount: UInt32 = try read(from: data, cursor: &cursor)
         let indexCount: UInt32 = try read(from: data, cursor: &cursor)
         let indexWidth: UInt16 = try read(from: data, cursor: &cursor)
         guard indexWidth == ConvertedMeshHeader.indexWidth else { throw ConvertedMeshFormatError.invalidIndexWidth }
@@ -109,6 +138,10 @@ enum ConvertedMeshFormat {
         var positions: [SIMD3<Float>] = []
         positions.reserveCapacity(Int(vertexCount))
         for _ in 0..<vertexCount { positions.append(try readVector(from: data, cursor: &cursor)) }
+
+        var texCoords: [SIMD2<Float>] = []
+        texCoords.reserveCapacity(Int(textureCoordinateCount))
+        for _ in 0..<textureCoordinateCount { texCoords.append(try readVector2(from: data, cursor: &cursor)) }
 
         var indices: [UInt32] = []
         indices.reserveCapacity(Int(indexCount))
@@ -128,6 +161,7 @@ enum ConvertedMeshFormat {
 
         let mesh = ConvertedMesh(
             positions: positions,
+            texCoords: texCoords,
             indices: indices,
             boundsMin: boundsMin,
             boundsMax: boundsMax,
@@ -140,6 +174,7 @@ enum ConvertedMeshFormat {
     static func roundTripSelfCheck() -> Bool {
         let mesh = ConvertedMesh(
             positions: [SIMD3<Float>(0, 0, 0), SIMD3<Float>(1, 0, 0), SIMD3<Float>(0, 1, 0)],
+            texCoords: [SIMD2<Float>(0, 0), SIMD2<Float>(1, 0), SIMD2<Float>(0, 1)],
             indices: [0, 1, 2],
             boundsMin: SIMD3<Float>(0, 0, 0),
             boundsMax: SIMD3<Float>(1, 1, 0),
@@ -167,6 +202,11 @@ enum ConvertedMeshFormat {
         append(value.bitPattern, to: &data)
     }
 
+    private static func append(_ value: SIMD2<Float>, to data: inout Data) {
+        append(value.x, to: &data)
+        append(value.y, to: &data)
+    }
+
     private static func append(_ value: SIMD3<Float>, to data: inout Data) {
         append(value.x, to: &data)
         append(value.y, to: &data)
@@ -186,6 +226,13 @@ enum ConvertedMeshFormat {
     private static func readFloat(from data: Data, cursor: inout Int) throws -> Float {
         let bits: UInt32 = try read(from: data, cursor: &cursor)
         return Float(bitPattern: bits)
+    }
+
+    private static func readVector2(from data: Data, cursor: inout Int) throws -> SIMD2<Float> {
+        SIMD2<Float>(
+            try readFloat(from: data, cursor: &cursor),
+            try readFloat(from: data, cursor: &cursor)
+        )
     }
 
     private static func readVector(from data: Data, cursor: inout Int) throws -> SIMD3<Float> {
