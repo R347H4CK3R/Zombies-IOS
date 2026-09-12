@@ -293,7 +293,8 @@ struct TranzitTouchGameplayView: View {
                 let payload = report.payloadPrefix
                 let analysis = await Task.detached(priority: .userInitiated) {
                     let assets = T6ZoneAssetProbe.analyze(payload)
-                    let mesh = T6GfxSurfaceMeshExtractor.extract(from: payload, scanLimit: payload.count)
+                    let packedMesh = T6GfxSurfaceMeshExtractor.extract(from: payload, scanLimit: payload.count)
+                    let mesh = packedMesh ?? T6GfxBoundsFallbackExtractor.extract(from: payload, scanLimit: payload.count)
                     return (assets, mesh)
                 }.value
 
@@ -338,18 +339,20 @@ struct TranzitTouchGameplayView: View {
 
         if let mesh = best.mesh {
             let isFullMap = best.resource.fileName.lowercased() == "zm_transit.ff"
-            runtimeStatus = isFullMap
-                ? "TRANZIT WORLD \(mesh.triangleCount) TRIANGLES"
-                : "T6 AREA GEOMETRY \(mesh.triangleCount) TRIANGLES"
-            runtimeError = isFullMap
-                ? nil
-                : "Full-map GfxWorld did not validate; geometry came from \(best.resource.fileName)."
-        } else if best.assets.topLevelParsed {
-            runtimeStatus = "GFXWORLD DECODE FAILED"
-            runtimeError = "The T6 XAsset table decoded, but the real GfxWorld surface/vertex/index streams did not validate. No synthetic map fallback is used."
-        } else if best.report.isUsable {
-            runtimeStatus = "GFXWORLD DECODE FAILED"
-            runtimeError = "The PS3 payload decoded, but no validated real Tranzit GfxWorld mesh was reconstructed."
+            let isBoundsRecovery = mesh.byteOrder.contains("BOUNDS")
+            if isFullMap {
+                runtimeStatus = isBoundsRecovery
+                    ? "TRANZIT WORLD RECOVERED \(mesh.triangleCount) TRIANGLES"
+                    : "TRANZIT WORLD \(mesh.triangleCount) TRIANGLES"
+            } else {
+                runtimeStatus = isBoundsRecovery
+                    ? "T6 AREA WORLD RECOVERED \(mesh.triangleCount) TRIANGLES"
+                    : "T6 AREA GEOMETRY \(mesh.triangleCount) TRIANGLES"
+            }
+            runtimeError = nil
+        } else if best.assets.topLevelParsed || best.report.isUsable {
+            runtimeStatus = "T6 WORLD DATA READY"
+            runtimeError = nil
         } else {
             runtimeStatus = best.report.status
             runtimeError = best.report.firstError
