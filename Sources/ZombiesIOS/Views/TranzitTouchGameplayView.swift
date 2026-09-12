@@ -1,5 +1,19 @@
 import SwiftUI
 
+enum TranzitRuntimePhase: Equatable {
+    case validatingSource
+    case preparingSourceCache
+    case copyingDependencies(done: Int, total: Int)
+    case decodingZones(done: Int, total: Int)
+    case resolvingAssets
+    case buildingWorld
+    case decodingTextures(done: Int, total: Int)
+    case creatingRenderPackage
+    case waitingForFirstFrame
+    case ready
+    case failed(String)
+}
+
 struct TranzitTouchGameplayView: View {
     let loadedArea: TranzitLoadedArea
     let rootURL: URL
@@ -15,7 +29,8 @@ struct TranzitTouchGameplayView: View {
     @State private var health = 100
     @State private var ammo = 30
     @State private var kills = 0
-    @State private var runtimeStatus = "Opening Tranzit stream…"
+    @State private var runtimeStatus = "VALIDATING BO2 SOURCE"
+    @State private var phase: TranzitRuntimePhase = .validatingSource
     @State private var streamOffset: UInt64 = 0
     @State private var streamProgress: Double = 0
     @State private var anchorSamples = 0
@@ -24,7 +39,12 @@ struct TranzitTouchGameplayView: View {
     @State private var structureReport: FastFileStructureReport?
     @State private var decodedPayloadReport: T6DecodedPayloadReport?
     @State private var assetProbeReport: T6ZoneAssetProbeReport?
+
+    // Legacy mesh remains diagnostic-only during the typed world migration.
+    // It can be shown for decoder debugging but can never satisfy .ready.
     @State private var runtimeMesh: T6RuntimeMesh?
+    @State private var renderableWorld: T6RenderableWorld?
+    @State private var renderMetrics = RenderValidationMetrics.zero
     @State private var decodedSourceName = ""
     @State private var decodedSeed = 0
 
@@ -34,7 +54,8 @@ struct TranzitTouchGameplayView: View {
         let base = loadedArea.fastFile.header.reduce(0xB02) { partial, byte in
             ((partial &* 16777619) ^ Int(byte)) & 0x7fffffff
         }
-        return (base ^ decodedSeed) & 0x7fffffff
+        let worldComponent = renderableWorld?.triangleCount ?? 0
+        return (base ^ decodedSeed ^ worldComponent) & 0x7fffffff
     }
 
     var body: some View {
@@ -51,7 +72,9 @@ struct TranzitTouchGameplayView: View {
                     ammo: $ammo,
                     kills: $kills,
                     mapSeed: sceneSeed,
-                    runtimeMesh: runtimeMesh
+                    runtimeMesh: runtimeMesh,
+                    renderableWorld: renderableWorld,
+                    onMetrics: receiveRenderMetrics
                 )
                 .id(sceneSeed)
                 .ignoresSafeArea()
@@ -139,9 +162,23 @@ struct TranzitTouchGameplayView: View {
 
     @ViewBuilder
     private var runtimeBanner: some View {
-        if let report = decodedPayloadReport {
+        if renderableWorld != nil {
             HStack(spacing: 9) {
-                Text("T6 PS3")
+                Text(phase == .ready ? "RENDER PASS" : "RENDER CHECK")
+                Text("SURF \(renderMetrics.drawnSurfaces)")
+                Text("TRI \(renderMetrics.submittedTriangles)")
+                Text("MAT \(renderMetrics.nonFallbackMaterials)")
+                Text("TEX \(renderMetrics.residentTextures)")
+                Text("BLACK \(Int(renderMetrics.blackPixelRatio * 100))%")
+            }
+            .font(.caption2.bold().monospaced())
+            .foregroundStyle(phase == .ready ? .green : .orange)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(.black.opacity(0.42), in: Capsule())
+        } else if let report = decodedPayloadReport {
+            HStack(spacing: 9) {
+                Text("T6 DIAGNOSTIC")
                 Text("XCHUNKS \(report.decodedChunkCount)")
                 Text("DECODED \(ByteCountFormatter.string(fromByteCount: Int64(report.decodedBytes), countStyle: .file))")
                 if let assets = assetProbeReport {
@@ -154,15 +191,15 @@ struct TranzitTouchGameplayView: View {
                     }
                 }
                 if let mesh = runtimeMesh {
-                    Text("WORLD \(mesh.vertices.count)V/\(mesh.triangleCount)T")
-                    Text(mesh.byteOrder)
+                    Text("MESH \(mesh.vertices.count)V/\(mesh.triangleCount)T")
+                    Text("NOT CERTIFIED")
                 }
             }
             .font(.caption2.bold().monospaced())
-            .foregroundStyle(.green.opacity(0.9))
+            .foregroundStyle(.orange.opacity(0.95))
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
-            .background(.black.opacity(0.34), in: Capsule())
+            .background(.black.opacity(0.42), in: Capsule())
         } else if let report = structureReport {
             HStack(spacing: 9) {
                 Text(report.summary)
@@ -216,6 +253,8 @@ struct TranzitTouchGameplayView: View {
     }
 
     private func validateStream() async {
+        phase = .validatingSource
+        runtimeStatus = "VALIDATING BO2 SOURCE"
         streaming = true
         runtimeError = nil
         let reader = FastFileStreamReader(rootURL: rootURL, resource: loadedArea.fastFile)
@@ -225,14 +264,16 @@ struct TranzitTouchGameplayView: View {
             let analysis = FastFileRuntimeAnalyzer.analyze(chunks: samples)
             anchorSamples = samples.count
             structureReport = analysis
-            runtimeStatus = analysis.looksStructured ? "BO2 DATA READY" : "BO2 DATA READABLE"
+            runtimeStatus = analysis.looksStructured ? "BO2 DATA VALIDATED" : "BO2 DATA READABLE"
             streaming = false
             await prefetchInitialBurst()
             await decodeT6Payload()
         } catch {
             streaming = false
-            runtimeStatus = "STREAM OFFLINE"
-            runtimeError = "Runtime could not sample \(loadedArea.fastFile.fileName): \(error.localizedDescription)"
+            let message = "Runtime could not sample \(loadedArea.fastFile.fileName): \(error.localizedDescription)"
+            phase = .failed(message)
+            runtimeStatus = "SOURCE VALIDATION FAILED"
+            runtimeError = message
         }
     }
 
@@ -253,18 +294,23 @@ struct TranzitTouchGameplayView: View {
             }
             streamOffset = offset >= fileSize ? 0 : offset
             streamProgress = lastProgress
-            runtimeStatus = "BO2 STREAM READY"
+            runtimeStatus = "BO2 STREAM VALIDATED"
             runtimeError = nil
         } catch {
+            let message = "BO2 prefetch failed: \(error.localizedDescription)"
+            phase = .failed(message)
             runtimeStatus = "BO2 STREAM ERROR"
-            runtimeError = "BO2 prefetch failed: \(error.localizedDescription)"
+            runtimeError = message
         }
         streaming = false
     }
 
     private func decodeT6Payload() async {
+        guard runtimeError == nil else { return }
         let decoder = T6PS3PayloadDecoder()
         let candidates = decodeCandidates()
+        phase = .decodingZones(done: 0, total: min(8, candidates.count))
+
         var best: (
             resource: TranzitLoadedResource,
             report: T6DecodedPayloadReport,
@@ -273,9 +319,10 @@ struct TranzitTouchGameplayView: View {
         )?
         var lastError: Error?
 
-        for resource in candidates.prefix(8) {
+        for (candidateIndex, resource) in candidates.prefix(8).enumerated() {
             do {
-                runtimeStatus = "T6 DEEP DECODING \(resource.fileName)"
+                phase = .decodingZones(done: candidateIndex, total: min(8, candidates.count))
+                runtimeStatus = "DECODING T6 ZONE \(candidateIndex + 1)/\(min(8, candidates.count))"
                 await Task.yield()
 
                 let isMainTranzit = resource.fileName.lowercased() == "zm_transit.ff"
@@ -287,9 +334,7 @@ struct TranzitTouchGameplayView: View {
                     maxChunks: isMainTranzit ? 4096 : 2048
                 )
 
-                runtimeStatus = isMainTranzit ? "TRANZIT GFXWORLD DECODE" : "T6 GFXWORLD DECODE"
                 await Task.yield()
-
                 let payload = report.payloadPrefix
                 let analysis = await Task.detached(priority: .userInitiated) {
                     let assets = T6ZoneAssetProbe.analyze(payload)
@@ -300,7 +345,6 @@ struct TranzitTouchGameplayView: View {
 
                 let assets = analysis.0
                 let mesh = analysis.1
-
                 if best == nil || decodeScore(
                     resource: resource,
                     report: report,
@@ -324,8 +368,10 @@ struct TranzitTouchGameplayView: View {
         }
 
         guard let best else {
+            let message = "No T6 PS3 Tranzit container decoded successfully: \(lastError?.localizedDescription ?? "unknown decode failure")"
+            phase = .failed(message)
             runtimeStatus = "T6 DECODE FAILED"
-            runtimeError = "No T6 PS3 Tranzit container decoded successfully: \(lastError?.localizedDescription ?? "unknown decode failure")"
+            runtimeError = message
             return
         }
 
@@ -337,26 +383,40 @@ struct TranzitTouchGameplayView: View {
             ((partial &* 16777619) ^ Int(byte)) & 0x7fffffff
         } ^ (best.mesh?.vertexOffset ?? 0) ^ (best.mesh?.indexOffset ?? 0)
 
-        if let mesh = best.mesh {
-            let isFullMap = best.resource.fileName.lowercased() == "zm_transit.ff"
-            let isBoundsRecovery = mesh.byteOrder.contains("BOUNDS")
-            if isFullMap {
-                runtimeStatus = isBoundsRecovery
-                    ? "TRANZIT WORLD RECOVERED \(mesh.triangleCount) TRIANGLES"
-                    : "TRANZIT WORLD \(mesh.triangleCount) TRIANGLES"
-            } else {
-                runtimeStatus = isBoundsRecovery
-                    ? "T6 AREA WORLD RECOVERED \(mesh.triangleCount) TRIANGLES"
-                    : "T6 AREA GEOMETRY \(mesh.triangleCount) TRIANGLES"
+        // Critical: a heuristic/legacy mesh is decoder evidence only. It is not
+        // gameplay readiness. The production path must resolve actual typed
+        // GfxWorld surfaces -> Material -> GfxImage and create renderableWorld.
+        phase = .resolvingAssets
+        runtimeStatus = "RESOLVING REAL T6 MATERIALS / TEXTURES"
+        runtimeError = nil
+    }
+
+    private func receiveRenderMetrics(_ metrics: RenderValidationMetrics) {
+        renderMetrics = metrics
+        guard renderableWorld != nil else {
+            if case .ready = phase {
+                phase = .resolvingAssets
             }
-            runtimeError = nil
-        } else if best.assets.topLevelParsed || best.report.isUsable {
-            runtimeStatus = "T6 WORLD DATA READY"
+            return
+        }
+
+        if RenderValidation.accepts(metrics) {
+            phase = .ready
+            runtimeStatus = "TRANZIT READY"
             runtimeError = nil
         } else {
-            runtimeStatus = best.report.status
-            runtimeError = best.report.firstError
+            phase = .waitingForFirstFrame
+            runtimeStatus = "WAITING FOR VERIFIED TEXTURED FRAME"
         }
+    }
+
+    private func installRenderableWorld(_ world: T6RenderableWorld) {
+        renderMetrics = .zero
+        renderableWorld = world
+        phase = .waitingForFirstFrame
+        runtimeStatus = "WAITING FOR VERIFIED TEXTURED FRAME"
+        runtimeError = nil
+        decodedSeed ^= world.triangleCount
     }
 
     private func decodeCandidates() -> [TranzitLoadedResource] {
