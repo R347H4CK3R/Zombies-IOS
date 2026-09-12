@@ -65,3 +65,4 @@ ci-gameplay-render-validation-bounded 2026-09-12T13:31:00-05:00
 ci-gameplay-render-validation-concurrency 2026-09-12T13:36:00-05:00
 iphone17-visual-validation 2026-09-12T13:45:00-05:00
 iphone17-boot-timeout-retry 2026-09-12T13:55:00-05:00
+t6-gfxsurface-layout-fix 2026-09-12T14:33:00-05:00
