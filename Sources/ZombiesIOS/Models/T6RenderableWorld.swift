@@ -1,4 +1,5 @@
 import Foundation
+import simd
 
 enum T6TextureFormat: Hashable, Sendable {
     case rgba8Unorm
