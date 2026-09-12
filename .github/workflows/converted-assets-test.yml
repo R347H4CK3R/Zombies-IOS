@@ -10,4 +10,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run converted asset architecture tests
-        run: python3 -m unittest Tools.tests.test_converted_asset_architecture -v
+        run: |
+          python3 -m unittest Tools.tests.test_converted_asset_architecture -v
+          python3 -m unittest Tools.tests.test_converted_production_routing -v
