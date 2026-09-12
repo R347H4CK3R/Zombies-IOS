@@ -271,7 +271,7 @@ struct NativeFPSSceneView: UIViewRepresentable {
         }
 
         private func worldNormalizationTransform(vertices: [SCNVector3]) -> (position: SCNVector3, scale: Float) {
-            guard let first = vertices.first else { return (.zero, 1) }
+            guard let first = vertices.first else { return (SCNVector3Zero, 1) }
             var minV = first
             var maxV = first
             for v in vertices.dropFirst() {
