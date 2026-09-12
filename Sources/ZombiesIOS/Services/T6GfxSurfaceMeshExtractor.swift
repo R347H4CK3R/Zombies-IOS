@@ -2,11 +2,11 @@ import Foundation
 
 /// Reconstructs real T6/BO2 GfxWorld triangles from a decoded PS3 zone payload.
 ///
-/// T6 PS3 serializes GfxSurface as an 0x50-byte structure. The embedded
+/// T6 serializes GfxSurface as an 0x50-byte structure. The embedded
 /// srfTriangles_t occupies the first 0x30 bytes:
-/// mins[3] @ 0x00, vertexLayerData @ 0x0C, maxs[3] @ 0x10,
-/// firstVertex @ 0x1C, vertexCount @ 0x20, triCount @ 0x22,
-/// baseIndex @ 0x24, himipRadiusSq @ 0x28, stream2ByteOffset @ 0x2C.
+/// mins[3] @ 0x00, vertexDataOffset0 @ 0x0C, maxs[3] @ 0x10,
+/// vertexDataOffset1 @ 0x1C, firstVertex @ 0x20, himipRadiusInvSq @ 0x24,
+/// vertexCount @ 0x28, triCount @ 0x2A, baseIndex @ 0x2C.
 /// Material/lighting metadata begins at 0x30 and bounds at 0x38.
 ///
 /// The decoded XFile payload is not guaranteed to begin on the same 16-byte
@@ -23,13 +23,13 @@ enum T6GfxSurfaceMeshExtractor {
     private struct SurfaceRecord {
         let mins: SIMD3<Float>
         let maxs: SIMD3<Float>
-        let vertexLayerData: Int
+        let vertexDataOffset0: Int
+        let vertexDataOffset1: Int
         let firstVertex: Int
         let vertexCount: Int
         let triCount: Int
         let baseIndex: Int
-        let himipRadiusSq: Float
-        let stream2ByteOffset: Int
+        let himipRadiusInvSq: Float
     }
 
     private struct Run {
@@ -93,8 +93,6 @@ enum T6GfxSurfaceMeshExtractor {
         }
     }
 
-    // MARK: - GfxSurface discovery
-
     private static func findBestSurfaceRun(_ bytes: UnsafeBufferPointer<UInt8>) -> Run? {
         guard bytes.count >= gfxSurfaceStride * minimumRun else { return nil }
         var best: Run?
@@ -149,20 +147,20 @@ enum T6GfxSurfaceMeshExtractor {
             beFloat(bytes, offset + 0x04),
             beFloat(bytes, offset + 0x08)
         )
-        let vertexLayerData = Int(Int32(bitPattern: be32(bytes, offset + 0x0C)))
+        let vertexDataOffset0 = Int(Int32(bitPattern: be32(bytes, offset + 0x0C)))
         let maxs = SIMD3<Float>(
             beFloat(bytes, offset + 0x10),
             beFloat(bytes, offset + 0x14),
             beFloat(bytes, offset + 0x18)
         )
-        let firstVertex = Int(Int32(bitPattern: be32(bytes, offset + 0x1C)))
-        let vertexCount = Int(be16(bytes, offset + 0x20))
-        let triCount = Int(be16(bytes, offset + 0x22))
-        let baseIndex = Int(Int32(bitPattern: be32(bytes, offset + 0x24)))
-        let himipRadiusSq = beFloat(bytes, offset + 0x28)
-        let stream2ByteOffset = Int(Int32(bitPattern: be32(bytes, offset + 0x2C)))
+        let vertexDataOffset1 = Int(Int32(bitPattern: be32(bytes, offset + 0x1C)))
+        let firstVertex = Int(Int32(bitPattern: be32(bytes, offset + 0x20)))
+        let himipRadiusInvSq = beFloat(bytes, offset + 0x24)
+        let vertexCount = Int(be16(bytes, offset + 0x28))
+        let triCount = Int(be16(bytes, offset + 0x2A))
+        let baseIndex = Int(Int32(bitPattern: be32(bytes, offset + 0x2C)))
 
-        guard finite(mins), finite(maxs), himipRadiusSq.isFinite,
+        guard finite(mins), finite(maxs), himipRadiusInvSq.isFinite,
               mins.x <= maxs.x, mins.y <= maxs.y, mins.z <= maxs.z,
               firstVertex >= 0, firstVertex < 8_000_000,
               vertexCount >= 3, vertexCount <= 32_768,
@@ -177,17 +175,15 @@ enum T6GfxSurfaceMeshExtractor {
         return SurfaceRecord(
             mins: mins,
             maxs: maxs,
-            vertexLayerData: vertexLayerData,
+            vertexDataOffset0: vertexDataOffset0,
+            vertexDataOffset1: vertexDataOffset1,
             firstVertex: firstVertex,
             vertexCount: vertexCount,
             triCount: triCount,
             baseIndex: baseIndex,
-            himipRadiusSq: himipRadiusSq,
-            stream2ByteOffset: stream2ByteOffset
+            himipRadiusInvSq: himipRadiusInvSq
         )
     }
-
-    // MARK: - GfxWorld vertex/index stream discovery
 
     private static func findVertexStreamBase(
         _ bytes: UnsafeBufferPointer<UInt8>,
@@ -390,8 +386,6 @@ enum T6GfxSurfaceMeshExtractor {
         indices.append(contentsOf: localIndices)
         return true
     }
-
-    // MARK: - Helpers
 
     private static func rejectSpatialOutliers(_ input: [SurfaceRecord]) -> [SurfaceRecord] {
         guard input.count >= 24 else { return input }
