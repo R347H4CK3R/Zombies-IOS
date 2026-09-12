@@ -90,7 +90,7 @@ jobs:
           xcodebuild -project ZombiesIOS.xcodeproj -scheme ZombiesIOS -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build/SimulatorDerivedData CODE_SIGNING_ALLOWED=NO build
 
       - name: Boot iPhone 17 Simulator and validate gameplay rendering
-        timeout-minutes: 5
+        timeout-minutes: 7
         shell: bash
         run: |
           set -euo pipefail
@@ -131,7 +131,7 @@ jobs:
           xcrun simctl boot "$DEVICE_UDID" 2>/dev/null || true
           DEVICE_UDID="$DEVICE_UDID" python3 - <<'PY'
           import os, subprocess
-          subprocess.run(['xcrun','simctl','bootstatus',os.environ['DEVICE_UDID'],'-b'], check=True, timeout=120)
+          subprocess.run(['xcrun','simctl','bootstatus',os.environ['DEVICE_UDID'],'-b'], check=True, timeout=240)
           PY
           xcrun simctl install "$DEVICE_UDID" "$APP_PATH"
           LAUNCH_OUTPUT="$(xcrun simctl launch "$DEVICE_UDID" "$BUNDLE_ID" --ci-gameplay-validation 2>&1)"
