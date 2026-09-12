@@ -64,19 +64,19 @@ struct TranzitTouchGameplayView: View {
                             Text("TRANZIT")
                                 .font(.headline.monospaced()).foregroundStyle(.white)
                             Text("SPAWN \(area.displayName.uppercased())")
-                                .font(.caption2.bold().monospaced())
+                                .font(.caption2.bold.monospaced())
                                 .foregroundStyle(.white.opacity(0.72))
                             Text("HP \(health)")
-                                .font(.title3.bold().monospaced())
+                                .font(.title3.bold.monospaced())
                                 .foregroundStyle(health > 35 ? .white : .red)
                             Text("KILLS \(kills)")
-                                .font(.caption.bold().monospaced())
+                                .font(.caption.bold.monospaced())
                                 .foregroundStyle(.white.opacity(0.9))
                         }
                         Spacer(minLength: 90)
                         VStack(alignment: .trailing, spacing: 3) {
                             Text("\(ammo) / 30")
-                                .font(.title2.bold().monospaced())
+                                .font(.title2.bold.monospaced())
                                 .foregroundStyle(ammo > 5 ? .white : .orange)
                             Text(runtimeStatus)
                                 .font(.caption2.bold()).foregroundStyle(runtimeError == nil ? .white.opacity(0.8) : .red)
@@ -111,7 +111,7 @@ struct TranzitTouchGameplayView: View {
                                 Text(mesh.byteOrder)
                             }
                         }
-                        .font(.caption2.bold().monospaced())
+                        .font(.caption2.bold.monospaced())
                         .foregroundStyle(.green.opacity(0.9))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
@@ -241,12 +241,12 @@ struct TranzitTouchGameplayView: View {
             prefetchedBytes += total
             streamOffset = offset >= fileSize ? 0 : offset
             streamProgress = lastProgress
-            runtimeStatus = "PLAYABLE + BO2 STREAM"
+            runtimeStatus = "BO2 STREAM READY"
             runtimeError = nil
             streaming = false
         } catch {
-            runtimeStatus = "PLAYABLE / STREAM ERROR"
-            runtimeError = "Gameplay is running, but BO2 prefetch failed: \(error.localizedDescription)"
+            runtimeStatus = "BO2 STREAM ERROR"
+            runtimeError = "BO2 prefetch failed: \(error.localizedDescription)"
             streaming = false
         }
     }
@@ -263,7 +263,7 @@ struct TranzitTouchGameplayView: View {
                 await Task.yield()
 
                 let isMainTranzit = resource.fileName.lowercased() == "zm_transit.ff"
-                let decodeBudget = isMainTranzit ? 64 * 1024 * 1024 : 32 * 1024 * 1024
+                let decodeBudget = isMainTranzit ? 128 * 1024 * 1024 : 48 * 1024 * 1024
                 let report = try await decoder.decodePrefix(
                     rootURL: rootURL,
                     resource: resource,
@@ -271,14 +271,13 @@ struct TranzitTouchGameplayView: View {
                     maxChunks: isMainTranzit ? 4096 : 2048
                 )
 
-                runtimeStatus = isMainTranzit ? "TRANZIT GFXSURFACE SEARCH" : "T6 WORLD MESH SEARCH"
+                runtimeStatus = isMainTranzit ? "TRANZIT GFXWORLD DECODE" : "T6 GFXWORLD DECODE"
                 await Task.yield()
 
                 let payload = report.payloadPrefix
                 let analysis = await Task.detached(priority: .userInitiated) { () -> (T6ZoneAssetProbeReport, T6RuntimeMesh?) in
                     let assets = T6ZoneAssetProbe.analyze(payload)
                     let mesh = T6GfxSurfaceMeshExtractor.extract(from: payload, scanLimit: payload.count)
-                        ?? T6GfxBoundsFallbackExtractor.extract(from: payload, scanLimit: payload.count)
                     return (assets, mesh)
                 }.value
                 let assets = analysis.0
@@ -288,9 +287,6 @@ struct TranzitTouchGameplayView: View {
                     best = (resource, report, assets, mesh)
                 }
 
-                // A sufficiently large mesh from the authoritative full-map
-                // container is enough to render immediately. Asset-table parsing
-                // is independent and must not hold the scene on the debug arena.
                 if isMainTranzit,
                    let mesh,
                    mesh.triangleCount >= 90 {
@@ -302,8 +298,8 @@ struct TranzitTouchGameplayView: View {
         }
 
         guard let best else {
-            runtimeStatus = "PLAYABLE / T6 DECODE ERROR"
-            runtimeError = "Native controls are running, but no T6 PS3 Tranzit container decoded successfully: \(lastError?.localizedDescription ?? "unknown decode failure")"
+            runtimeStatus = "T6 DECODE FAILED"
+            runtimeError = "No T6 PS3 Tranzit container decoded successfully: \(lastError?.localizedDescription ?? "unknown decode failure")"
             return
         }
 
@@ -320,13 +316,13 @@ struct TranzitTouchGameplayView: View {
             runtimeStatus = isFullMap
                 ? "TRANZIT WORLD \(mesh.triangleCount) TRIANGLES"
                 : "T6 AREA GEOMETRY \(mesh.triangleCount) TRIANGLES"
-            runtimeError = isFullMap ? nil : "Full-map geometry was not selected yet; using \(best.resource.fileName) as a temporary area fallback."
+            runtimeError = isFullMap ? nil : "Full-map GfxWorld did not validate; decoded geometry came from \(best.resource.fileName)."
         } else if best.assets.topLevelParsed {
-            runtimeStatus = "T6 XASSET INDEX READY / NO WORLD MESH"
-            runtimeError = "Tranzit assets decoded, but a renderable GfxWorld mesh has not been reconstructed yet."
+            runtimeStatus = "GFXWORLD DECODE FAILED"
+            runtimeError = "The T6 XAsset table decoded, but the real GfxWorld surface/vertex/index streams did not validate. No synthetic map fallback is used."
         } else if best.report.isUsable {
-            runtimeStatus = best.assets.candidateAssetCount > 0 ? "T6 ASSET SCAN READY" : "PLAYABLE + T6 DECODE"
-            runtimeError = nil
+            runtimeStatus = "GFXWORLD DECODE FAILED"
+            runtimeError = "The PS3 payload decoded, but no validated real Tranzit GfxWorld mesh was reconstructed."
         } else {
             runtimeStatus = best.report.status
             runtimeError = best.report.firstError
@@ -364,7 +360,7 @@ struct TranzitTouchGameplayView: View {
 
     private func decodeScore(resource: TranzitLoadedResource, report: T6DecodedPayloadReport, assets: T6ZoneAssetProbeReport, mesh: T6RuntimeMesh?) -> Int {
         var score = 0
-        if resource.fileName.lowercased() == "zm_transit.ff" { score += 50_000 }
+        if resource.fileName.lowercased() == "zm_transit.ff", mesh != nil { score += 50_000 }
         if report.isUsable { score += 100 }
         score += min(500, report.decodedChunkCount)
         score += assets.topLevelParsed ? 2_000 : 0
