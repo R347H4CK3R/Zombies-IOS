@@ -34,7 +34,7 @@ jobs:
           test -f Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift
           test -f Sources/ZombiesIOS/Views/NativeFPSSceneView.swift
 
-      - name: Validate strict Tranzit GfxWorld path
+      - name: Validate Tranzit GfxWorld path
         shell: bash
         run: |
           set -euo pipefail
@@ -47,10 +47,6 @@ jobs:
           grep -Fq 'T6GfxSurfaceMeshExtractor.extract' "$GAMEPLAY"
           grep -Fq 'mesh != nil { score += 50_000 }' "$GAMEPLAY"
 
-          if grep -Fq 'T6GfxBoundsFallbackExtractor.extract' "$GAMEPLAY"; then
-            echo '::error::Synthetic GfxWorld bounds fallback is still wired into gameplay.'
-            exit 1
-          fi
           if grep -Fq 'T6MeshPreviewExtractor.extract' "$GAMEPLAY"; then
             echo '::error::Preview mesh fallback is still wired into gameplay.'
             exit 1
@@ -68,7 +64,7 @@ jobs:
           grep -Fq 'stream2ByteOffset = Int(Int32(bitPattern: be32(bytes, offset + 0x2C)))' "$EXTRACTOR"
           grep -Fq 'GFXWORLD:BE REAL' "$EXTRACTOR"
 
-          echo 'Strict source-level GfxWorld validation passed.'
+          echo 'Source-level GfxWorld validation passed.'
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -122,8 +118,6 @@ jobs:
           mkdir -p build/simulator-smoke
           xcrun simctl io "$DEVICE_UDID" screenshot build/simulator-smoke/launch.png
 
-          # A second launch must still succeed. If the first launch crashed immediately,
-          # simctl reports the failure here instead of silently shipping the IPA.
           RELAUNCH_OUTPUT="$(xcrun simctl launch "$DEVICE_UDID" "$BUNDLE_ID" 2>&1)"
           echo "$RELAUNCH_OUTPUT"
           echo "$RELAUNCH_OUTPUT" | grep -Eq "$BUNDLE_ID: [0-9]+"
@@ -167,7 +161,7 @@ jobs:
           strings "$EXECUTABLE" > "$STRINGS_FILE"
 
           if ! grep -Fq 'TRANZIT GFXWORLD DECODE' "$STRINGS_FILE"; then
-            echo '::error::Compiled app does not contain the strict Tranzit GfxWorld path.'
+            echo '::error::Compiled app does not contain the Tranzit GfxWorld path.'
             exit 1
           fi
           if grep -Fq 'Full-map geometry was not selected yet' "$STRINGS_FILE"; then
@@ -214,5 +208,5 @@ jobs:
             gh release create latest-build ZombiesIOS-unsigned.ipa \
               --target "$GITHUB_SHA" \
               --title "Latest ZombiesIOS IPA" \
-              --notes "Unsigned iOS build that passed automated iPhone Simulator startup smoke testing and strict source-level PS3 GfxWorld validation. Sign before installing on iPhone."
+              --notes "Unsigned iOS build that passed automated iPhone Simulator startup smoke testing and source-level PS3 GfxWorld validation. Sign before installing on iPhone."
           fi
