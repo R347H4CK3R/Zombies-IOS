@@ -38,7 +38,7 @@ enum CIRenderDiagnosticsStore {
         do {
             let data = try JSONEncoder().encode(diagnostics)
             let target = url
-            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: nil)
             let tmp = target.appendingPathExtension("tmp")
             try data.write(to: tmp, options: .atomic)
             try? FileManager.default.removeItem(at: target)
