@@ -51,3 +51,4 @@ relaxed-ps3-gfxworld-surface-validation 2026-09-11T09:38:45-05:00
 ps3-gfxworld-phase-alignment-fix 2026-09-11T09:47:00-05:00
 gfxworld-workflow-idempotent-retry 2026-09-11T09:52:00-05:00
 run89-hardening-fix 2026-09-11T09:55:00-05:00
+stale-gfxworld-gate-removal 2026-09-11T22:19:00-05:00
