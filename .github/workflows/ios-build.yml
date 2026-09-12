@@ -164,15 +164,19 @@ jobs:
           EXECUTABLE="$APP_PATH/ZombiesIOS"
           test -f "$EXECUTABLE"
 
-          if strings "$EXECUTABLE" | grep -Fq 'No GfxWorld asset exists in the decoded T6 XAsset index.'; then
+          STRINGS_FILE="$(mktemp)"
+          trap 'rm -f "$STRINGS_FILE"' EXIT
+          strings "$EXECUTABLE" > "$STRINGS_FILE"
+
+          if grep -Fq 'No GfxWorld asset exists in the decoded T6 XAsset index.' "$STRINGS_FILE"; then
             echo '::error::Compiled app still contains the obsolete GfxWorld XAsset-index fatal gate.'
             exit 1
           fi
 
-          strings "$EXECUTABLE" | grep -Fq 'TRANZIT GFXWORLD DECODE' || {
+          if ! grep -Fq 'TRANZIT GFXWORLD DECODE' "$STRINGS_FILE"; then
             echo '::error::Compiled app does not contain the direct Tranzit GfxWorld decode path.'
             exit 1
-          }
+          fi
 
           echo 'Compiled decoder verification passed: obsolete gate absent, direct GfxWorld path present.'
 
