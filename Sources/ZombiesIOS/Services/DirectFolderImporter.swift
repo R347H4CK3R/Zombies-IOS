@@ -21,6 +21,7 @@ actor DirectFolderImporter {
     }
 
     private let scanner = PS3DumpScanner()
+    private let folderStore = ExternalGameFolderStore()
 
     /// Progressive direct-folder import: scan and use the user's original folder
     /// in place. No BO2 files are copied into Documents, Library, Application
@@ -39,6 +40,7 @@ actor DirectFolderImporter {
 
         do {
             let report = try await scanner.scan(folderURL: folderURL)
+            try? folderStore.save(folderURL: folderURL)
             return Result(report: report, importedAssetsURL: folderURL)
         } catch PS3DumpScanner.ScannerError.noManifestMatches {
             throw ImportError.noManifestMatches

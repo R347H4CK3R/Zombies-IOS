@@ -28,6 +28,14 @@ It recursively inventories the selected folder, identifies likely Call of Duty: 
 5. Add native Zombies gameplay, iPhone touch controls, and HUD.
 6. Continue producing IPA builds through GitHub Actions.
 
+## Content and redistribution boundary
+
+The repository and distributed IPA are intended to contain only project-authored material or material with explicit redistribution rights. BO2/PS3 game files are supplied separately by the user through iOS Files or attached storage and are read from that external location; the project does not bundle them into the IPA or mirror the selected game folder into app-private storage.
+
+Generated metadata such as hashes, paths, offsets, and compatibility information may be cached separately. Decoded textures, reconstructed map geometry, extracted meshes, converted audio, copied scripts, and similar expressive derivatives remain user-local runtime data and are excluded from release artifacts by default.
+
+See [`docs/CONTENT_POLICY.md`](docs/CONTENT_POLICY.md) for the full contribution, provenance, allow-list, and CI audit rules.
+
 ## Important
 
-Do not commit full PS3 dumps, ISOs, PKGs, EBOOT binaries, or other copyrighted game archives to this repository. Keep source dumps on local/USB storage and use the importer to generate metadata and converted assets that you are legally permitted to use.
+Do not commit full PS3 dumps, FastFiles, IPAKs, audio banks, ISOs, PKGs, EBOOT/SELF/SPRX binaries, extracted game assets, or other copyrighted game archives to this repository. Converting, renaming, compressing, decompiling, encrypting, or repackaging a third-party asset does not by itself change its copyright status. Keep source dumps and expressive derivatives local and use the importer for user-supplied data.

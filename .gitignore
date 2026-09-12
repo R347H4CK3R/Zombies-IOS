@@ -9,16 +9,33 @@ build/
 # macOS
 .DS_Store
 
-# PS3 dumps and proprietary binaries
+# User-supplied game data and console archives
+*.ff
+*.ipak
+*.sabs
+*.sabl
+*.pak
 *.iso
 *.xiso
 *.pkg
-EBOOT.BIN
 *.self
 *.sprx
 *.psarc
-raw_dump/
+EBOOT.BIN
 PS3_GAME/
+raw_dump/
+game-data/
+game_data/
 
-# Scanner output that may contain local paths
+# User-local decoded/converted expressive derivatives
+runtime-expressive-cache/
+extracted-assets/
+extracted_assets/
+decoded-textures/
+decoded-models/
+decoded-audio/
+decoded-maps/
+
+# Scanner/runtime outputs
 scan-output/
+local-runtime-cache/
