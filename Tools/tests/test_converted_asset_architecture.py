@@ -89,6 +89,20 @@ class ConvertedAssetArchitectureTests(unittest.TestCase):
         self.assertNotIn("SCNBox", weapon)
         self.assertNotIn("SCNCylinder", weapon)
 
+    def test_import_orchestrator_is_resumable_and_reports_stages(self):
+        importer = (ROOT / "Sources/ZombiesIOS/ConvertedAssets/ConvertedTranzitImporter.swift").read_text()
+        report = (ROOT / "Sources/ZombiesIOS/ConvertedAssets/ConvertedImportReport.swift").read_text()
+        for stage in ["scanning", "decodingWorld", "convertingGeometry", "convertingTextures", "buildingCollision", "convertingWeapon", "validating", "ready"]:
+            self.assertIn(stage, importer)
+        self.assertIn("ConvertedSourceFingerprint.make", importer)
+        self.assertIn("staging-state.json", importer)
+        self.assertIn("beginStaging", importer)
+        self.assertIn("promoteStaging", importer)
+        self.assertIn("manifest.json", importer)
+        self.assertIn("import-report.json", report)
+        self.assertIn("completedStages", report)
+        self.assertIn("sourceFingerprint", report)
+
 
 if __name__ == "__main__":
     unittest.main()
