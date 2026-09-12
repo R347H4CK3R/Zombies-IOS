@@ -18,15 +18,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate BO2 asset boundary
+      - name: Test redistribution content audit
+        run: python3 -m unittest Tools.tests.test_content_audit -v
+
+      - name: Audit source tree for non-redistributable content
+        run: python3 Tools/content_audit.py . --allowlist Tools/content_allowlist.txt
+
+      - name: Validate runtime source boundary
         shell: bash
         run: |
           set -euo pipefail
-          if find . -type f \( -name '*.ff' -o -name '*.ipak' -o -name '*.sabs' -o -name '*.sabl' -o -name 'EBOOT.BIN' \) -print -quit | grep -q .; then
-            echo "::error::Raw BO2/PS3 payload files must stay local and must not be bundled into the repository IPA."
-            exit 1
-          fi
           test -f Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift
+          test -f Sources/ZombiesIOS/Services/ExternalGameFolderStore.swift
+          test -f Sources/ZombiesIOS/Services/RuntimeCachePolicy.swift
           test -f Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift
           test -f Sources/ZombiesIOS/Views/NativeFPSSceneView.swift
 
@@ -88,9 +92,6 @@ jobs:
               '',
           )
 
-          # PS3 builds do not use the PC-style trailing bounds bytes as a reliable
-          # GfxSurface validity test. Remove that block by its actual Swift code,
-          # regardless of comments or formatting in the source revision.
           tail = re.compile(
               r'\n\s*let b0 = SIMD3<Float>\(beFloat\(bytes, offset \+ 56\).*?\n\s*return SurfaceRecord\(',
               re.S,
@@ -115,7 +116,6 @@ jobs:
               p.read_text(errors='ignore') for p in Path('Sources').rglob('*.swift')
           )
 
-          # Fail here with explicit messages instead of opaque grep exit codes.
           checks = {
               'Tranzit decode budget': '128 * 1024 * 1024' in text,
               'GfxWorld runtime status': 'TRANZIT GFXWORLD DECODE' in text,
@@ -180,6 +180,14 @@ jobs:
 
           echo 'Compiled decoder verification passed: obsolete gate absent, direct GfxWorld path present.'
 
+      - name: Audit built app for non-redistributable content
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find build/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$APP_PATH"
+          python3 Tools/content_audit.py "$APP_PATH" --allowlist Tools/content_allowlist.txt
+
       - name: Package IPA
         run: |
           APP_PATH="$(find build/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -print -quit)"
@@ -209,5 +217,5 @@ jobs:
             gh release create latest-build ZombiesIOS-unsigned.ipa \
               --target "$GITHUB_SHA" \
               --title "Latest ZombiesIOS IPA" \
-              --notes "Unsigned iOS build with PS3 GfxWorld geometry decode. Sign before installing on iPhone."
+              --notes "Unsigned iOS build with PS3 GfxWorld geometry decode and clean-content release audit. Sign before installing on iPhone."
           fi
