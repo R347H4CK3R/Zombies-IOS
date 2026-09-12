@@ -25,6 +25,10 @@ struct CIRenderDiagnostics: Codable {
     var frameCount = 0
     var ready = false
     var lastFrameTimestamp: Double = 0
+    var packageFormatVersion: Int = 0
+    var packagePathClass: String = ""
+    var convertedTextureCount: Int = 0
+    var convertedWeaponVertexCount: Int = 0
 }
 
 enum CIRenderDiagnosticsStore {
