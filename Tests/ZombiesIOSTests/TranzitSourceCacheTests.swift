@@ -64,7 +64,7 @@ final class TranzitSourceCacheTests: XCTestCase {
         do {
             _ = try await cache.prepare(manifest: TranzitDependencyManifest(entries: [required]), sourceRoot: fixture.source)
             XCTFail("Expected missing required source to fail")
-        } catch TranzitSourceCache.CacheError.requiredSourceMissing {
+        } catch TranzitSourceCache.CacheError.requiredSourceMissing(_) {
             // expected
         }
 
