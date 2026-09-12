@@ -42,6 +42,21 @@ class ConvertedAssetArchitectureTests(unittest.TestCase):
         self.assertIn("moveItem", store)
         self.assertIn("activeManifest", store)
 
+    def test_world_importer_decodes_ps3_only_during_conversion(self):
+        importer = (ROOT / "Sources/ZombiesIOS/ConvertedAssets/ConvertedWorldImporter.swift").read_text()
+        self.assertIn("T6PS3PayloadDecoder", importer)
+        self.assertIn("T6GfxSurfaceMeshExtractor.extract", importer)
+        self.assertIn("T6GfxBoundsFallbackExtractor.extract", importer)
+        self.assertIn("ConvertedMeshFormat.encode", importer)
+        self.assertIn("ConvertedMeshFormat.decode", importer)
+        self.assertIn("world/area.mesh", importer)
+        self.assertIn("selectedSourceFile", importer)
+        self.assertIn("decodedChunkCount", importer)
+        self.assertIn("vertexOffset", importer)
+        self.assertIn("indexOffset", importer)
+        self.assertIn("boundsFallbackUsed", importer)
+        self.assertNotIn("SCNNode", importer)
+
 
 if __name__ == "__main__":
     unittest.main()
