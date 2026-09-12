@@ -104,6 +104,21 @@ class ConvertedAssetArchitectureTests(unittest.TestCase):
         self.assertIn("completedStages", report)
         self.assertIn("sourceFingerprint", report)
 
+    def test_runtime_loader_reads_only_converted_package(self):
+        loader = (ROOT / "Sources/ZombiesIOS/ConvertedAssets/ConvertedTranzitLoader.swift").read_text()
+        package = (ROOT / "Sources/ZombiesIOS/ConvertedAssets/ConvertedRuntimePackage.swift").read_text()
+        self.assertIn("ConvertedPackageValidator.validate", loader)
+        self.assertIn("ConvertedMeshFormat.decode", loader)
+        self.assertIn("ConvertedMaterialManifest", loader)
+        self.assertIn("ConvertedWeaponMaterialMetadata", loader)
+        self.assertIn("sourceFingerprint", package)
+        self.assertIn("worldMesh", package)
+        self.assertIn("collisionMesh", package)
+        self.assertIn("weaponMesh", package)
+        self.assertNotIn("T6PS3PayloadDecoder", loader)
+        self.assertNotIn("T6GfxSurfaceMeshExtractor", loader)
+        self.assertNotIn("zm_transit.ff", loader)
+
 
 if __name__ == "__main__":
     unittest.main()
