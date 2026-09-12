@@ -132,6 +132,20 @@ class ConvertedAssetArchitectureTests(unittest.TestCase):
         self.assertNotIn("T6GfxSurfaceMeshExtractor", renderer)
         self.assertNotIn("zm_transit.ff", renderer)
 
+    def test_world_texture_coordinates_survive_conversion_and_rendering(self):
+        runtime_mesh = (ROOT / "Sources/ZombiesIOS/Services/T6MeshPreviewExtractor.swift").read_text()
+        extractor = (ROOT / "Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift").read_text()
+        mesh_format = (ROOT / "Sources/ZombiesIOS/ConvertedAssets/ConvertedMeshFormat.swift").read_text()
+        importer = (ROOT / "Sources/ZombiesIOS/ConvertedAssets/ConvertedWorldImporter.swift").read_text()
+        renderer = (ROOT / "Sources/ZombiesIOS/Views/ConvertedTranzitSceneView.swift").read_text()
+        self.assertIn("texCoords", runtime_mesh)
+        self.assertIn("packedTexCoordOffset", extractor)
+        self.assertIn("halfToFloat", extractor)
+        self.assertIn("texCoords", mesh_format)
+        self.assertIn("textureCoordinateCount", mesh_format)
+        self.assertIn("texCoords: best.mesh.texCoords", importer)
+        self.assertIn("SCNGeometrySource(textureCoordinates:", renderer)
+
 
 if __name__ == "__main__":
     unittest.main()
