@@ -15,6 +15,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Run redistribution and render-gate Python tests
+        run: python3 -m unittest Tools.tests.test_content_audit Tools.tests.test_render_gate -v
+
       - name: Install XcodeGen
         run: brew install xcodegen
 
