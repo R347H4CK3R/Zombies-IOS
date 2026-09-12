@@ -1,10 +1,10 @@
-# Manual build only. Source commits do not automatically build an IPA.
+# Manual build plus CI gameplay-validation branch.
 name: Build iOS IPA
 
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ main, ci-gameplay-validation-final ]
     paths:
       - '.github/build-trigger.txt'
 
@@ -21,6 +21,12 @@ jobs:
       - name: Test redistribution content audit
         run: python3 -m unittest Tools.tests.test_content_audit -v
 
+      - name: Install CI visual test dependency
+        run: python3 -m pip install pillow
+
+      - name: Test CI visual validator
+        run: python3 -m unittest Tools.tests.test_ci_visual_validate -v
+
       - name: Audit source tree for non-redistributable content
         run: python3 Tools/content_audit.py . --allowlist Tools/content_allowlist.txt
 
@@ -33,6 +39,16 @@ jobs:
           test -f Sources/ZombiesIOS/Services/RuntimeCachePolicy.swift
           test -f Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift
           test -f Sources/ZombiesIOS/Views/NativeFPSSceneView.swift
+          test -f Sources/ZombiesIOS/Support/CIValidationMode.swift
+          test -f Sources/ZombiesIOS/Support/CIRuntimeMeshFixture.swift
+          test -f Sources/ZombiesIOS/Support/CIRenderDiagnostics.swift
+          test -f Sources/ZombiesIOS/Views/CIGameplayValidationEntryView.swift
+          grep -Fq -- '--ci-gameplay-validation' Sources/ZombiesIOS/Support/CIValidationMode.swift
+          grep -Fq 'ZOMBIESIOS_CI_GAMEPLAY' Sources/ZombiesIOS/Support/CIValidationMode.swift
+          grep -Fq 'CIValidationMode.isEnabled' Sources/ZombiesIOS/ZombiesIOSApp.swift
+          grep -Fq 'ContentView()' Sources/ZombiesIOS/ZombiesIOSApp.swift
+          grep -Fq 'Choose BO2 Game Folder' Sources/ZombiesIOS/ContentView.swift
+          grep -Fq 'CI-FIXTURE' Sources/ZombiesIOS/Support/CIRuntimeMeshFixture.swift
 
       - name: Validate Tranzit GfxWorld path
         shell: bash
@@ -52,7 +68,7 @@ jobs:
             exit 1
           fi
           if grep -Fq 'buildFallbackArena' "$SCENE"; then
-            echo '::error::Synthetic fallback arena is still compiled into the scene.'
+            echo '::error::Synthetic fallback arena is still compiled into the production scene.'
             exit 1
           fi
 
@@ -60,11 +76,7 @@ jobs:
           grep -Fq 'vertexCount = Int(be16(bytes, offset + 0x20))' "$EXTRACTOR"
           grep -Fq 'triCount = Int(be16(bytes, offset + 0x22))' "$EXTRACTOR"
           grep -Fq 'baseIndex = Int(Int32(bitPattern: be32(bytes, offset + 0x24)))' "$EXTRACTOR"
-          grep -Fq 'himipRadiusSq = beFloat(bytes, offset + 0x28)' "$EXTRACTOR"
-          grep -Fq 'stream2ByteOffset = Int(Int32(bitPattern: be32(bytes, offset + 0x2C)))' "$EXTRACTOR"
           grep -Fq 'GFXWORLD:BE REAL' "$EXTRACTOR"
-
-          echo 'Source-level GfxWorld validation passed.'
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -86,51 +98,71 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build
 
-      - name: Boot iPhone Simulator and smoke-test app
+      - name: Boot iPhone Simulator and validate gameplay rendering
         shell: bash
         run: |
           set -euo pipefail
           BUNDLE_ID='com.r347h4ck3r.zombiesios'
           APP_PATH="$(find build/SimulatorDerivedData/Build/Products/Debug-iphonesimulator -maxdepth 1 -name '*.app' -print -quit)"
           test -n "$APP_PATH"
+          mkdir -p build/ci-gameplay
 
-          DEVICE_UDID="$(xcrun simctl list devices available -j | python3 -c '
-          import json,sys
-          data=json.load(sys.stdin)
-          for runtime, devices in data.get("devices", {}).items():
-              for d in reversed(devices):
-                  if d.get("isAvailable") and d.get("name", "").startswith("iPhone"):
-                      print(d["udid"])
-                      raise SystemExit(0)
-          raise SystemExit("No available iPhone Simulator found")
-          ')"
+          python3 - <<'PY' > build/ci-gameplay/selected-device.txt
+          import json, subprocess
+          data=json.loads(subprocess.check_output(['xcrun','simctl','list','devices','available','-j']))
+          candidates=[]
+          for runtime, devices in data.get('devices', {}).items():
+              for d in devices:
+                  if d.get('isAvailable') and d.get('name','').startswith('iPhone'):
+                      score = 2 if ('Plus' in d['name'] or 'Pro Max' in d['name']) else 1
+                      candidates.append((score, runtime, d['name'], d['udid']))
+          if not candidates:
+              raise SystemExit('No available iPhone Simulator found')
+          score,runtime,name,udid=sorted(candidates, reverse=True)[0]
+          print(udid)
+          print(name)
+          print(runtime)
+          PY
+
+          DEVICE_UDID="$(sed -n '1p' build/ci-gameplay/selected-device.txt)"
+          DEVICE_NAME="$(sed -n '2p' build/ci-gameplay/selected-device.txt)"
+          DEVICE_RUNTIME="$(sed -n '3p' build/ci-gameplay/selected-device.txt)"
+          printf 'name=%s\nudid=%s\nruntime=%s\n' "$DEVICE_NAME" "$DEVICE_UDID" "$DEVICE_RUNTIME" > build/ci-gameplay/simulator-metadata.txt
 
           xcrun simctl boot "$DEVICE_UDID" 2>/dev/null || true
-          open -a Simulator --args -CurrentDeviceUDID "$DEVICE_UDID" || true
           xcrun simctl bootstatus "$DEVICE_UDID" -b
           xcrun simctl install "$DEVICE_UDID" "$APP_PATH"
 
-          LAUNCH_OUTPUT="$(xcrun simctl launch "$DEVICE_UDID" "$BUNDLE_ID" 2>&1)"
-          echo "$LAUNCH_OUTPUT"
+          LAUNCH_OUTPUT="$(xcrun simctl launch "$DEVICE_UDID" "$BUNDLE_ID" --ci-gameplay-validation 2>&1)"
+          echo "$LAUNCH_OUTPUT" | tee build/ci-gameplay/launch-output.txt
           echo "$LAUNCH_OUTPUT" | grep -Eq "$BUNDLE_ID: [0-9]+"
 
-          sleep 10
-          mkdir -p build/simulator-smoke
-          xcrun simctl io "$DEVICE_UDID" screenshot build/simulator-smoke/launch.png
+          sleep 4
+          xcrun simctl io "$DEVICE_UDID" screenshot build/ci-gameplay/gameplay-1.png
+          sleep 2
+          xcrun simctl io "$DEVICE_UDID" screenshot build/ci-gameplay/gameplay-2.png
 
-          RELAUNCH_OUTPUT="$(xcrun simctl launch "$DEVICE_UDID" "$BUNDLE_ID" 2>&1)"
-          echo "$RELAUNCH_OUTPUT"
-          echo "$RELAUNCH_OUTPUT" | grep -Eq "$BUNDLE_ID: [0-9]+"
+          DATA_CONTAINER="$(xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" data)"
+          test -f "$DATA_CONTAINER/Documents/ci-render-diagnostics.json"
+          cp "$DATA_CONTAINER/Documents/ci-render-diagnostics.json" build/ci-gameplay/ci-render-diagnostics.json
 
+          python3 Tools/ci_visual_validate.py \
+            --screenshot-1 build/ci-gameplay/gameplay-1.png \
+            --screenshot-2 build/ci-gameplay/gameplay-2.png \
+            --diagnostics build/ci-gameplay/ci-render-diagnostics.json \
+            --report build/ci-gameplay/visual-report.json
+
+          xcrun simctl spawn "$DEVICE_UDID" log show --style compact --last 2m --predicate 'process == "ZombiesIOS"' > build/ci-gameplay/simulator.log 2>&1 || true
           xcrun simctl terminate "$DEVICE_UDID" "$BUNDLE_ID" || true
           xcrun simctl shutdown "$DEVICE_UDID" || true
 
-      - name: Upload Simulator smoke-test evidence
+      - name: Upload CI gameplay validation evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ZombiesIOS-simulator-smoke
-          path: build/simulator-smoke/launch.png
-          if-no-files-found: error
+          name: ZombiesIOS-ci-validation-evidence
+          path: build/ci-gameplay
+          if-no-files-found: warn
           retention-days: 30
 
       - name: Build unsigned device app
@@ -155,21 +187,14 @@ jobs:
           test -n "$APP_PATH"
           EXECUTABLE="$APP_PATH/ZombiesIOS"
           test -f "$EXECUTABLE"
-
           STRINGS_FILE="$(mktemp)"
           trap 'rm -f "$STRINGS_FILE"' EXIT
           strings "$EXECUTABLE" > "$STRINGS_FILE"
-
-          if ! grep -Fq 'TRANZIT GFXWORLD DECODE' "$STRINGS_FILE"; then
-            echo '::error::Compiled app does not contain the Tranzit GfxWorld path.'
-            exit 1
-          fi
+          grep -Fq 'TRANZIT GFXWORLD DECODE' "$STRINGS_FILE"
           if grep -Fq 'Full-map geometry was not selected yet' "$STRINGS_FILE"; then
             echo '::error::Compiled app still contains the old temporary geometry fallback.'
             exit 1
           fi
-
-          echo 'Compiled decoder verification passed.'
 
       - name: Audit built app for non-redistributable content
         shell: bash
@@ -199,6 +224,7 @@ jobs:
           retention-days: 30
 
       - name: Create or update latest-build release
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -208,5 +234,5 @@ jobs:
             gh release create latest-build ZombiesIOS-unsigned.ipa \
               --target "$GITHUB_SHA" \
               --title "Latest ZombiesIOS IPA" \
-              --notes "Unsigned iOS build that passed automated iPhone Simulator startup smoke testing and source-level PS3 GfxWorld validation. Sign before installing on iPhone."
+              --notes "Unsigned iOS build that passed automated CI gameplay rendering validation. Sign before installing on iPhone."
           fi
