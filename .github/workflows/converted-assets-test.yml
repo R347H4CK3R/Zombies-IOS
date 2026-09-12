@@ -13,3 +13,4 @@ jobs:
         run: |
           python3 -m unittest Tools.tests.test_converted_asset_architecture -v
           python3 -m unittest Tools.tests.test_converted_production_routing -v
+          python3 -m unittest Tools.tests.test_converted_ci_route -v
