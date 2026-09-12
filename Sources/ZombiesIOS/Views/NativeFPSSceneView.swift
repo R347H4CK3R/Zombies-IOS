@@ -23,7 +23,7 @@ struct NativeFPSSceneView: UIViewRepresentable {
         let view = SCNView(frame: .zero)
         view.scene = context.coordinator.scene
         view.pointOfView = context.coordinator.cameraNode
-        view.backgroundColor = .black
+        view.backgroundColor = UIColor(white: 0.035, alpha: 1)
         view.isPlaying = true
         view.rendersContinuously = true
         view.preferredFramesPerSecond = 60
@@ -73,6 +73,10 @@ struct NativeFPSSceneView: UIViewRepresentable {
         private var lastJumpPulse = 0
         private var lastReloadPulse = 0
 
+        private var worldMin = SCNVector3(-10, 0, -10)
+        private var worldMax = SCNVector3(10, 10, 10)
+        private var worldCenter = SCNVector3Zero
+
         init(runtimeMesh: T6RuntimeMesh?, health: Binding<Int>, ammo: Binding<Int>, kills: Binding<Int>) {
             self.runtimeMesh = runtimeMesh
             self.healthBinding = health
@@ -101,7 +105,7 @@ struct NativeFPSSceneView: UIViewRepresentable {
         func applyJumpPulse(_ pulse: Int) {
             guard pulse != lastJumpPulse else { return }
             lastJumpPulse = pulse
-            if playerNode.position.y <= 1.67 {
+            if playerNode.position.y <= worldMin.y + 2.0 {
                 jumpVelocity = 5.6
             }
         }
@@ -115,30 +119,12 @@ struct NativeFPSSceneView: UIViewRepresentable {
 
         private func buildScene() {
             scene.physicsWorld.gravity = SCNVector3(0, -20, 0)
-            scene.fogStartDistance = 110
-            scene.fogEndDistance = 360
-            scene.fogColor = UIColor(red: 0.055, green: 0.050, blue: 0.045, alpha: 1)
 
-            let ambient = SCNLight()
-            ambient.type = .ambient
-            ambient.intensity = 520
-            ambient.color = UIColor(white: 0.72, alpha: 1)
-            let ambientNode = SCNNode()
-            ambientNode.light = ambient
-            scene.rootNode.addChildNode(ambientNode)
-
-            let sun = SCNLight()
-            sun.type = .directional
-            sun.intensity = 900
-            sun.castsShadow = true
-            let sunNode = SCNNode()
-            sunNode.light = sun
-            sunNode.eulerAngles = SCNVector3(-0.9, -0.55, 0)
-            scene.rootNode.addChildNode(sunNode)
-
+            // Debug render path: keep the decoded GfxWorld fully visible regardless of
+            // missing T6 materials, lightmaps, fog metadata, winding, or normals.
             if runtimeMesh != nil {
-                buildSafetyFloor()
                 buildDecodedWorld()
+                buildSafetyFloor()
             }
 
             buildPlayer()
@@ -150,7 +136,7 @@ struct NativeFPSSceneView: UIViewRepresentable {
             floor.firstMaterial?.diffuse.contents = UIColor.clear
             floor.firstMaterial?.transparency = 0
             let node = SCNNode(geometry: floor)
-            node.position.y = -0.35
+            node.position.y = worldMin.y - 0.35
             node.categoryBitMask = environmentCategory
             node.physicsBody = SCNPhysicsBody(type: .static, shape: nil)
             scene.rootNode.addChildNode(node)
@@ -164,41 +150,110 @@ struct NativeFPSSceneView: UIViewRepresentable {
             }
 
             let vertices = runtimeMesh.vertices.map { SCNVector3($0.x, $0.y, $0.z) }
+            updateWorldBounds(vertices)
+
             let source = SCNGeometrySource(vertices: vertices)
             let indices = runtimeMesh.indices.map { Int32($0) }
             let element = SCNGeometryElement(indices: indices, primitiveType: .triangles)
-            let geometry = SCNGeometry(sources: [source], elements: [element])
 
-            let material = SCNMaterial()
-            material.diffuse.contents = UIColor(red: 0.42, green: 0.38, blue: 0.31, alpha: 1)
-            material.ambient.contents = UIColor(red: 0.20, green: 0.18, blue: 0.15, alpha: 1)
-            material.roughness.contents = 0.92
-            material.metalness.contents = 0.02
-            material.isDoubleSided = true
-            geometry.materials = [material]
+            // Solid pass: constant/unlit shading proves that actual decoded triangles
+            // are reaching SceneKit without depending on normals, textures, or lights.
+            let solidGeometry = SCNGeometry(sources: [source], elements: [element])
+            let solidMaterial = SCNMaterial()
+            solidMaterial.name = "t6-debug-solid"
+            solidMaterial.lightingModel = .constant
+            solidMaterial.diffuse.contents = UIColor(white: 0.74, alpha: 1)
+            solidMaterial.emission.contents = UIColor(white: 0.22, alpha: 1)
+            solidMaterial.isDoubleSided = true
+            solidMaterial.readsFromDepthBuffer = true
+            solidMaterial.writesToDepthBuffer = true
+            solidGeometry.materials = [solidMaterial]
 
-            let node = SCNNode(geometry: geometry)
-            node.name = "t6-ps3-tranzit-world"
-            node.position = SCNVector3Zero
-            node.categoryBitMask = environmentCategory
-            node.physicsBody = SCNPhysicsBody(
-                type: .static,
-                shape: SCNPhysicsShape(geometry: geometry, options: nil)
+            let solidNode = SCNNode(geometry: solidGeometry)
+            solidNode.name = "t6-ps3-tranzit-world-solid"
+            solidNode.categoryBitMask = environmentCategory
+            scene.rootNode.addChildNode(solidNode)
+
+            // Wireframe pass: makes topology visible even if the solid surfaces overlap,
+            // have bad winding, or are packed unusually after PS3 extraction.
+            let wireGeometry = SCNGeometry(sources: [source], elements: [element])
+            let wireMaterial = SCNMaterial()
+            wireMaterial.name = "t6-debug-wireframe"
+            wireMaterial.lightingModel = .constant
+            wireMaterial.diffuse.contents = UIColor.systemGreen
+            wireMaterial.emission.contents = UIColor.systemGreen
+            wireMaterial.fillMode = .lines
+            wireMaterial.isDoubleSided = true
+            wireMaterial.readsFromDepthBuffer = true
+            wireMaterial.writesToDepthBuffer = false
+            wireGeometry.materials = [wireMaterial]
+
+            let wireNode = SCNNode(geometry: wireGeometry)
+            wireNode.name = "t6-ps3-tranzit-world-wire"
+            wireNode.categoryBitMask = environmentCategory
+            wireNode.renderingOrder = 10
+            scene.rootNode.addChildNode(wireNode)
+
+            // Deliberately omit the giant triangle-mesh physics body during this render
+            // diagnostic. It can be restored once the real GfxWorld is visibly correct.
+        }
+
+        private func updateWorldBounds(_ vertices: [SCNVector3]) {
+            guard let first = vertices.first else { return }
+            var minV = first
+            var maxV = first
+            for v in vertices.dropFirst() {
+                minV.x = min(minV.x, v.x)
+                minV.y = min(minV.y, v.y)
+                minV.z = min(minV.z, v.z)
+                maxV.x = max(maxV.x, v.x)
+                maxV.y = max(maxV.y, v.y)
+                maxV.z = max(maxV.z, v.z)
+            }
+            worldMin = minV
+            worldMax = maxV
+            worldCenter = SCNVector3(
+                (minV.x + maxV.x) * 0.5,
+                (minV.y + maxV.y) * 0.5,
+                (minV.z + maxV.z) * 0.5
             )
-            scene.rootNode.addChildNode(node)
         }
 
         private func buildPlayer() {
-            playerNode.position = SCNVector3(0, 1.65, runtimeMesh == nil ? 0 : 20)
+            if runtimeMesh != nil {
+                let spanX = max(1, worldMax.x - worldMin.x)
+                let spanY = max(1, worldMax.y - worldMin.y)
+                let spanZ = max(1, worldMax.z - worldMin.z)
+                let horizontalSpan = max(spanX, spanZ)
+                let cameraDistance = max(14, horizontalSpan * 0.38)
+                let cameraHeight = worldCenter.y + max(4, spanY * 0.20)
+
+                // Start outside the positive-Z edge and look back through the center.
+                // This guarantees a useful overview even when the map's original spawn
+                // coordinates are not yet reconstructed from the zone.
+                playerNode.position = SCNVector3(
+                    worldCenter.x,
+                    cameraHeight,
+                    worldMax.z + cameraDistance
+                )
+
+                let dz = max(0.001, playerNode.position.z - worldCenter.z)
+                pitch = atan2(worldCenter.y - playerNode.position.y, dz)
+                yaw = 0
+            } else {
+                playerNode.position = SCNVector3(0, 1.65, 0)
+            }
+
             scene.rootNode.addChildNode(playerNode)
 
             let camera = SCNCamera()
             camera.fieldOfView = 72
             camera.zNear = 0.03
-            camera.zFar = 520
-            camera.wantsHDR = true
-            camera.bloomIntensity = 0.18
+            camera.zFar = 1200
+            camera.wantsHDR = false
             cameraNode.camera = camera
+            cameraNode.eulerAngles.x = pitch
+            playerNode.eulerAngles.y = yaw
             playerNode.addChildNode(cameraNode)
 
             // Real weapon geometry is intentionally not substituted with a box/cylinder.
@@ -242,14 +297,16 @@ struct NativeFPSSceneView: UIViewRepresentable {
 
             playerNode.position.x += (forward.x * ny + right.x * nx) * speed * dt
             playerNode.position.z += (forward.z * ny + right.z * nx) * speed * dt
-            let worldLimit: Float = 70
-            playerNode.position.x = max(-worldLimit, min(worldLimit, playerNode.position.x))
-            playerNode.position.z = max(-worldLimit, min(worldLimit, playerNode.position.z))
+
+            let pad: Float = 30
+            playerNode.position.x = max(worldMin.x - pad, min(worldMax.x + pad, playerNode.position.x))
+            playerNode.position.z = max(worldMin.z - pad, min(worldMax.z + pad, playerNode.position.z))
 
             jumpVelocity -= 14.5 * dt
             playerNode.position.y += jumpVelocity * dt
-            if playerNode.position.y <= 1.65 {
-                playerNode.position.y = 1.65
+            let floorY = worldMin.y + 1.65
+            if playerNode.position.y <= floorY {
+                playerNode.position.y = floorY
                 jumpVelocity = 0
             }
         }
