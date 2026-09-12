@@ -85,6 +85,6 @@ final class TranzitDependencyManifestTests: XCTestCase {
             TranzitDependency(relativePath: "a.ff", role: .zone, requirement: .required, byteCount: 1, sha256: "a", modifiedAt: nil)
         ])
 
-        XCTAssertEqual(manifest.entries.map(\.normalizedRelativePath), ["a.ff", "b.ff", "z.ff"])
+        XCTAssertEqual(manifest.entries.map { $0.normalizedRelativePath }, ["a.ff", "b.ff", "z.ff"])
     }
 }
