@@ -118,11 +118,11 @@ enum T6GfxBoundsFallbackExtractor {
 
         let mins = SIMD3<Float>(beFloat(bytes, offset), beFloat(bytes, offset + 4), beFloat(bytes, offset + 8))
         let maxs = SIMD3<Float>(beFloat(bytes, offset + 16), beFloat(bytes, offset + 20), beFloat(bytes, offset + 24))
-        let firstVertex = Int(Int32(bitPattern: be32(bytes, offset + 32)))
-        let himip = beFloat(bytes, offset + 36)
-        let vertexCount = Int(be16(bytes, offset + 40))
-        let triCount = Int(be16(bytes, offset + 42))
-        let baseIndex = Int(Int32(bitPattern: be32(bytes, offset + 44)))
+        let firstVertex = Int(Int32(bitPattern: be32(bytes, offset + 0x20)))
+        let himip = beFloat(bytes, offset + 0x24)
+        let vertexCount = Int(be16(bytes, offset + 0x28))
+        let triCount = Int(be16(bytes, offset + 0x2A))
+        let baseIndex = Int(Int32(bitPattern: be32(bytes, offset + 0x2C)))
 
         guard finite(mins), finite(maxs), himip.isFinite,
               mins.x <= maxs.x, mins.y <= maxs.y, mins.z <= maxs.z,
