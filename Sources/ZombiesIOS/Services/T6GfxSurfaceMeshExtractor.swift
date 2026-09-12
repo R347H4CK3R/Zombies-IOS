@@ -2,14 +2,19 @@ import Foundation
 
 /// Reconstructs real T6/BO2 GfxWorld triangles from a decoded PS3 zone payload.
 ///
-/// The important PS3 detail here is that the decoded XFile payload is not
-/// guaranteed to begin on the same 16-byte phase as the serialized GfxSurface
-/// array.  The XFile header is commonly 0x28 bytes, so scanning only offsets
-/// 0,16,32... can miss every real GfxSurface even though the asset table parsed.
+/// T6 PS3 serializes GfxSurface as an 0x50-byte structure. The embedded
+/// srfTriangles_t occupies the first 0x30 bytes:
+/// mins[3] @ 0x00, vertexLayerData @ 0x0C, maxs[3] @ 0x10,
+/// firstVertex @ 0x1C, vertexCount @ 0x20, triCount @ 0x22,
+/// baseIndex @ 0x24, himipRadiusSq @ 0x28, stream2ByteOffset @ 0x2C.
+/// Material/lighting metadata begins at 0x30 and bounds at 0x38.
+///
+/// The decoded XFile payload is not guaranteed to begin on the same 16-byte
+/// phase as the serialized GfxSurface array, so discovery scans every 4 bytes.
 enum T6GfxSurfaceMeshExtractor {
-    private static let gfxSurfaceStride = 80
+    private static let gfxSurfaceStride = 0x50
     private static let packedWorldVertexStride = 36
-    private static let minimumRun = 8
+    private static let minimumRun = 6
     private static let maxScanBytes = 128 * 1024 * 1024
     private static let maxSurfaceCount = 8_000
     private static let maxOutputVertices = 65_000
@@ -18,12 +23,13 @@ enum T6GfxSurfaceMeshExtractor {
     private struct SurfaceRecord {
         let mins: SIMD3<Float>
         let maxs: SIMD3<Float>
-        let vertexDataOffset0: Int
-        let vertexDataOffset1: Int
+        let vertexLayerData: Int
         let firstVertex: Int
         let vertexCount: Int
         let triCount: Int
         let baseIndex: Int
+        let himipRadiusSq: Float
+        let stream2ByteOffset: Int
     }
 
     private struct Run {
@@ -94,10 +100,6 @@ enum T6GfxSurfaceMeshExtractor {
         var best: Run?
         let lastStart = bytes.count - gfxSurfaceStride * minimumRun
 
-        // Do not assume the decoded payload is 16-byte phase aligned. The PS3
-        // XFile content can start at 0x28 (8 mod 16), and individual streams can
-        // also be rebased. Four-byte scanning still respects every field in the
-        // structure while covering all legal phases.
         var offset = 0
         while offset <= lastStart {
             guard parseSurface(bytes, offset: offset) != nil else {
@@ -142,17 +144,25 @@ enum T6GfxSurfaceMeshExtractor {
     private static func parseSurface(_ bytes: UnsafeBufferPointer<UInt8>, offset: Int) -> SurfaceRecord? {
         guard offset >= 0, offset + gfxSurfaceStride <= bytes.count else { return nil }
 
-        let mins = SIMD3<Float>(beFloat(bytes, offset), beFloat(bytes, offset + 4), beFloat(bytes, offset + 8))
-        let vdo0 = Int(Int32(bitPattern: be32(bytes, offset + 12)))
-        let maxs = SIMD3<Float>(beFloat(bytes, offset + 16), beFloat(bytes, offset + 20), beFloat(bytes, offset + 24))
-        let vdo1 = Int(Int32(bitPattern: be32(bytes, offset + 28)))
-        let firstVertex = Int(Int32(bitPattern: be32(bytes, offset + 32)))
-        let himip = beFloat(bytes, offset + 36)
-        let vertexCount = Int(be16(bytes, offset + 40))
-        let triCount = Int(be16(bytes, offset + 42))
-        let baseIndex = Int(Int32(bitPattern: be32(bytes, offset + 44)))
+        let mins = SIMD3<Float>(
+            beFloat(bytes, offset + 0x00),
+            beFloat(bytes, offset + 0x04),
+            beFloat(bytes, offset + 0x08)
+        )
+        let vertexLayerData = Int(Int32(bitPattern: be32(bytes, offset + 0x0C)))
+        let maxs = SIMD3<Float>(
+            beFloat(bytes, offset + 0x10),
+            beFloat(bytes, offset + 0x14),
+            beFloat(bytes, offset + 0x18)
+        )
+        let firstVertex = Int(Int32(bitPattern: be32(bytes, offset + 0x1C)))
+        let vertexCount = Int(be16(bytes, offset + 0x20))
+        let triCount = Int(be16(bytes, offset + 0x22))
+        let baseIndex = Int(Int32(bitPattern: be32(bytes, offset + 0x24)))
+        let himipRadiusSq = beFloat(bytes, offset + 0x28)
+        let stream2ByteOffset = Int(Int32(bitPattern: be32(bytes, offset + 0x2C)))
 
-        guard finite(mins), finite(maxs), himip.isFinite,
+        guard finite(mins), finite(maxs), himipRadiusSq.isFinite,
               mins.x <= maxs.x, mins.y <= maxs.y, mins.z <= maxs.z,
               firstVertex >= 0, firstVertex < 8_000_000,
               vertexCount >= 3, vertexCount <= 32_768,
@@ -164,21 +174,16 @@ enum T6GfxSurfaceMeshExtractor {
         let sorted = [span.x, span.y, span.z].sorted()
         guard largest > 0.0001, largest < 2_000_000, sorted[1] > 0.00001 else { return nil }
 
-        let b0 = SIMD3<Float>(beFloat(bytes, offset + 56), beFloat(bytes, offset + 60), beFloat(bytes, offset + 64))
-        let b1 = SIMD3<Float>(beFloat(bytes, offset + 68), beFloat(bytes, offset + 72), beFloat(bytes, offset + 76))
-        guard finite(b0), finite(b1),
-              abs(b0.x) < 4_000_000, abs(b0.y) < 4_000_000, abs(b0.z) < 4_000_000,
-              abs(b1.x) < 4_000_000, abs(b1.y) < 4_000_000, abs(b1.z) < 4_000_000 else { return nil }
-
         return SurfaceRecord(
             mins: mins,
             maxs: maxs,
-            vertexDataOffset0: vdo0,
-            vertexDataOffset1: vdo1,
+            vertexLayerData: vertexLayerData,
             firstVertex: firstVertex,
             vertexCount: vertexCount,
             triCount: triCount,
-            baseIndex: baseIndex
+            baseIndex: baseIndex,
+            himipRadiusSq: himipRadiusSq,
+            stream2ByteOffset: stream2ByteOffset
         )
     }
 
