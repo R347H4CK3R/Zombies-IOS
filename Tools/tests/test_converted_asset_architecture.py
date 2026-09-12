@@ -16,6 +16,18 @@ class ConvertedAssetArchitectureTests(unittest.TestCase):
         self.assertIn("modificationDate", fingerprint)
         self.assertIn("fileSize", fingerprint)
 
+    def test_native_mesh_format_contract_exists(self):
+        mesh = (ROOT / "Sources/ZombiesIOS/ConvertedAssets/ConvertedMeshFormat.swift").read_text()
+        self.assertIn("0x5A4D5348", mesh)
+        self.assertIn("formatVersion", mesh)
+        self.assertIn("littleEndian", mesh)
+        self.assertIn("vertexCount", mesh)
+        self.assertIn("indexCount", mesh)
+        self.assertIn("boundsMin", mesh)
+        self.assertIn("boundsMax", mesh)
+        self.assertIn("indexOutOfRange", mesh)
+        self.assertIn("roundTripSelfCheck", mesh)
+
 
 if __name__ == "__main__":
     unittest.main()
