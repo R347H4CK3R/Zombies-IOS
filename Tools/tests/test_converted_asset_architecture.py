@@ -57,6 +57,19 @@ class ConvertedAssetArchitectureTests(unittest.TestCase):
         self.assertIn("boundsFallbackUsed", importer)
         self.assertNotIn("SCNNode", importer)
 
+    def test_material_and_texture_conversion_contract_exists(self):
+        manifest = (ROOT / "Sources/ZombiesIOS/ConvertedAssets/ConvertedMaterialManifest.swift").read_text()
+        importer = (ROOT / "Sources/ZombiesIOS/ConvertedAssets/ConvertedMaterialImporter.swift").read_text()
+        self.assertIn("ConvertedMaterialRecord", manifest)
+        self.assertIn("diffuseTexturePath", manifest)
+        self.assertIn("fallbackReason", manifest)
+        self.assertIn("doubleSided", manifest)
+        self.assertIn("textures/", importer)
+        self.assertIn("pngData", importer)
+        self.assertIn("fallbackReason", importer)
+        self.assertIn("materials/materials.json", importer)
+        self.assertIn("fullFidelity", importer)
+
 
 if __name__ == "__main__":
     unittest.main()
