@@ -29,12 +29,13 @@ struct TranzitSourceCache {
     private let fileManager: FileManager
     private let cacheRoot: URL
 
-    init(
-        fileManager: FileManager = .default,
-        cacheRoot: URL? = nil
-    ) throws {
+    init(fileManager: FileManager = .default, cacheRoot: URL? = nil) throws {
         self.fileManager = fileManager
-        self.cacheRoot = try cacheRoot ?? RuntimeCachePolicy.tranzitSourceCacheRoot(fileManager: fileManager)
+        if let cacheRoot {
+            self.cacheRoot = cacheRoot
+        } else {
+            self.cacheRoot = try RuntimeCachePolicy.tranzitSourceCacheRoot(fileManager: fileManager)
+        }
         try fileManager.createDirectory(at: self.cacheRoot, withIntermediateDirectories: true)
     }
 
@@ -43,7 +44,7 @@ struct TranzitSourceCache {
         var reused: [TranzitDependency] = []
         var missingOptional: [TranzitDependency] = []
 
-        let allowedPaths = Set(manifest.entries.map(\.normalizedRelativePath))
+        let allowedPaths = Set(manifest.entries.map { $0.normalizedRelativePath })
         let removed = try removeStaleFiles(allowedRelativePaths: allowedPaths)
 
         for dependency in manifest.entries {
@@ -75,13 +76,7 @@ struct TranzitSourceCache {
         }
 
         try persist(manifest: manifest)
-
-        return TranzitSourceCacheResult(
-            copied: copied,
-            reused: reused,
-            removedRelativePaths: removed,
-            missingOptional: missingOptional
-        )
+        return TranzitSourceCacheResult(copied: copied, reused: reused, removedRelativePaths: removed, missingOptional: missingOptional)
     }
 
     private func isReusable(destination: URL, dependency: TranzitDependency) throws -> Bool {
@@ -96,9 +91,7 @@ struct TranzitSourceCache {
         try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
 
         let temp = parent.appendingPathComponent(".\(destination.lastPathComponent).\(UUID().uuidString).tmp")
-        if fileManager.fileExists(atPath: temp.path) {
-            try fileManager.removeItem(at: temp)
-        }
+        try? fileManager.removeItem(at: temp)
         try fileManager.copyItem(at: source, to: temp)
 
         do {
@@ -121,11 +114,9 @@ struct TranzitSourceCache {
     }
 
     private func removeStaleFiles(allowedRelativePaths: Set<String>) throws -> [String] {
-        guard let enumerator = fileManager.enumerator(
-            at: cacheRoot,
-            includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles]
-        ) else { return [] }
+        guard let enumerator = fileManager.enumerator(at: cacheRoot, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) else {
+            return []
+        }
 
         var removed: [String] = []
         for case let url as URL in enumerator {
