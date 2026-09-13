@@ -18,7 +18,9 @@ targets:
     platform: iOS
     sources:
       - Sources/ZombiesIOS
-      - Engine/Quake3
+      - path: Engine/Quake3
+        excludes:
+          - tests
     dependencies:
       - package: ZIPFoundation
       - sdk: libz.tbd
