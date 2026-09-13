@@ -31,6 +31,7 @@ final class BO2GameCoordinator: ObservableObject {
 
     func setGameMode(_ mode: GameModeRuntime) {
         gameMode = mode
+        objectWillChange.send()
     }
 
     func setFireHeld(_ held: Bool) {
@@ -60,6 +61,9 @@ final class BO2GameCoordinator: ObservableObject {
         case .multiplayer:
             break
         }
+        // Nested runtime objects are deliberately not ObservableObjects; publish
+        // one frame notification so HUD ammo/round/points reflect authoritative state.
+        objectWillChange.send()
     }
 
     var aimDirection: SIMD3<Float> {
@@ -70,11 +74,13 @@ final class BO2GameCoordinator: ObservableObject {
     }
 
     func fire(direction: SIMD3<Float>) {
-        lastCombatHits = weapon.fire(origin: movement.playerPosition, direction: direction)
+        let hits = weapon.fire(origin: movement.playerPosition, direction: direction)
+        if !hits.isEmpty { lastCombatHits = hits }
     }
 
     func beginReload() {
         weapon.beginReload()
+        objectWillChange.send()
     }
 
     func triggerUse(_ id: String) {
