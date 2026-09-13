@@ -1,10 +1,9 @@
-# Manual build plus CI gameplay-validation branch.
 name: Build iOS IPA
 
 on:
   workflow_dispatch:
   push:
-    branches: [ main, ci-gameplay-validation-final, fix/fresh-iphone17-ci ]
+    branches: [ main, feature/bo2-quake-runtime-primary ]
     paths:
       - '.github/build-trigger.txt'
 
@@ -23,11 +22,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Test redistribution content audit
-        run: python3 -m unittest Tools.tests.test_content_audit -v
-
-      - name: Test T6 GfxSurface layout
-        run: python3 -m unittest Tools.tests.test_t6_gfxsurface_layout -v
+      - name: Test BO2 Quake contracts
+        run: |
+          python3 -m unittest Tools.tests.test_bo2_quake_primary_runtime -v
+          python3 -m unittest Tools.tests.test_t6_gfxsurface_layout -v
+          python3 -m unittest Tools.tests.test_content_audit -v
 
       - name: Prepare CI visual test environment
         run: |
@@ -41,45 +40,24 @@ jobs:
       - name: Audit source tree for non-redistributable content
         run: python3 Tools/content_audit.py . --allowlist Tools/content_allowlist.txt
 
-      - name: Validate runtime source boundary
+      - name: Validate Quake production boundary
         shell: bash
         run: |
           set -euo pipefail
-          test -f Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift
-          test -f Sources/ZombiesIOS/Services/ExternalGameFolderStore.swift
-          test -f Sources/ZombiesIOS/Services/RuntimeCachePolicy.swift
-          test -f Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift
-          test -f Sources/ZombiesIOS/Views/NativeFPSSceneView.swift
-          test -f Sources/ZombiesIOS/Support/CIValidationMode.swift
-          test -f Sources/ZombiesIOS/Support/CIRuntimeMeshFixture.swift
-          test -f Sources/ZombiesIOS/Support/CIRenderDiagnostics.swift
-          test -f Sources/ZombiesIOS/Views/CIGameplayValidationEntryView.swift
-          grep -Fq -- '--ci-gameplay-validation' Sources/ZombiesIOS/Support/CIValidationMode.swift
-          grep -Fq 'ZOMBIESIOS_CI_GAMEPLAY' Sources/ZombiesIOS/Support/CIValidationMode.swift
-          grep -Fq 'CIValidationMode.isEnabled' Sources/ZombiesIOS/ZombiesIOSApp.swift
-          grep -Fq 'ContentView()' Sources/ZombiesIOS/ZombiesIOSApp.swift
-          grep -Fq 'Choose BO2 Game Folder' Sources/ZombiesIOS/ContentView.swift
-          grep -Fq 'CI-FIXTURE' Sources/ZombiesIOS/Support/CIRuntimeMeshFixture.swift
-
-      - name: Validate Tranzit GfxWorld path
-        shell: bash
-        run: |
-          set -euo pipefail
-          GAMEPLAY='Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift'
-          EXTRACTOR='Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift'
-          SCENE='Sources/ZombiesIOS/Views/NativeFPSSceneView.swift'
-          grep -Fq '128 * 1024 * 1024' "$GAMEPLAY"
-          grep -Fq 'TRANZIT GFXWORLD DECODE' "$GAMEPLAY"
-          grep -Fq 'T6GfxSurfaceMeshExtractor.extract' "$GAMEPLAY"
-          grep -Fq 'mesh != nil { score += 50_000 }' "$GAMEPLAY"
-          if grep -Fq 'T6MeshPreviewExtractor.extract' "$GAMEPLAY"; then exit 1; fi
-          if grep -Fq 'buildFallbackArena' "$SCENE"; then exit 1; fi
-          grep -Fq 'firstVertex = Int(Int32(bitPattern: be32(bytes, offset + 0x20)))' "$EXTRACTOR"
-          grep -Fq 'himipRadiusInvSq = beFloat(bytes, offset + 0x24)' "$EXTRACTOR"
-          grep -Fq 'vertexCount = Int(be16(bytes, offset + 0x28))' "$EXTRACTOR"
-          grep -Fq 'triCount = Int(be16(bytes, offset + 0x2A))' "$EXTRACTOR"
-          grep -Fq 'baseIndex = Int(Int32(bitPattern: be32(bytes, offset + 0x2C)))' "$EXTRACTOR"
-          grep -Fq 'GFXWORLD:BE REAL' "$EXTRACTOR"
+          test -f Engine/Quake3/zq3_runtime.c
+          test -f Engine/Quake3/zq3_runtime.h
+          test -f Sources/ZombiesIOS/EngineBridge/QuakeRuntimeController.swift
+          test -f Sources/ZombiesIOS/Views/QuakeGameplayView.swift
+          test -f Sources/ZombiesIOS/Views/BO2QuakeRootView.swift
+          test -f Sources/ZombiesIOS/Services/BO2MapRuntimeLoader.swift
+          test -f Sources/ZombiesIOS/Services/BO2RuntimePackage/BO2RuntimePackage.swift
+          grep -Fq 'BO2QuakeRootView()' Sources/ZombiesIOS/ZombiesIOSApp.swift
+          grep -Fq 'QuakeGameplayView(package:' Sources/ZombiesIOS/Views/BO2QuakeRootView.swift
+          grep -Fq 'T6PS3PayloadDecoder' Sources/ZombiesIOS/Services/BO2MapRuntimeLoader.swift
+          grep -Fq 'T6GfxSurfaceMeshExtractor' Sources/ZombiesIOS/Services/BO2MapRuntimeLoader.swift
+          grep -Fq 'mp_hijacked.ff' Sources/ZombiesIOS/Models/BO2ZombiesManifest.swift
+          if grep -Fq 'NativeFPSSceneView(' Sources/ZombiesIOS/Views/CIGameplayValidationEntryView.swift; then exit 1; fi
+          if grep -Fq 'import SceneKit' Sources/ZombiesIOS/Views/CIGameplayValidationEntryView.swift; then exit 1; fi
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -93,7 +71,7 @@ jobs:
           set -euo pipefail
           xcodebuild -project ZombiesIOS.xcodeproj -scheme ZombiesIOS -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build/SimulatorDerivedData CODE_SIGNING_ALLOWED=NO build
 
-      - name: Boot fresh iPhone 17 Simulator and validate gameplay rendering
+      - name: Boot fresh iPhone 17 Simulator and validate Quake rendering
         timeout-minutes: 8
         shell: bash
         run: |
@@ -105,112 +83,65 @@ jobs:
 
           python3 - <<'PY' > build/ci-gameplay/simulator-selection.txt
           import json, subprocess
-
-          device_types = json.loads(subprocess.check_output(['xcrun','simctl','list','devicetypes','-j']))['devicetypes']
-          matches = [d for d in device_types if d.get('name') == 'iPhone 17']
-          if not matches:
-              raise SystemExit('Required iPhone 17 device type is not installed on this runner')
-          device_type = matches[0]['identifier']
-
-          runtimes = json.loads(subprocess.check_output(['xcrun','simctl','list','runtimes','-j']))['runtimes']
-          ios = [r for r in runtimes if r.get('isAvailable') and r.get('platform') == 'iOS']
-          if not ios:
-              ios = [r for r in runtimes if r.get('isAvailable') and 'iOS' in r.get('name','')]
-          if not ios:
-              raise SystemExit('No available iOS Simulator runtime found')
-
-          def version_key(runtime):
-              raw = runtime.get('version', '0')
-              out = []
-              for part in raw.split('.'):
-                  try: out.append(int(part))
-                  except ValueError: out.append(0)
-              return tuple(out)
-
-          runtime = sorted(ios, key=version_key, reverse=True)[0]
-          print(device_type)
-          print(runtime['identifier'])
-          print(runtime.get('name', runtime['identifier']))
+          types=json.loads(subprocess.check_output(['xcrun','simctl','list','devicetypes','-j']))['devicetypes']
+          matches=[d for d in types if d.get('name')=='iPhone 17']
+          if not matches: raise SystemExit('Required iPhone 17 device type is not installed')
+          runtimes=json.loads(subprocess.check_output(['xcrun','simctl','list','runtimes','-j']))['runtimes']
+          ios=[r for r in runtimes if r.get('isAvailable') and (r.get('platform')=='iOS' or 'iOS' in r.get('name',''))]
+          if not ios: raise SystemExit('No available iOS Simulator runtime found')
+          def key(r):
+              return tuple(int(p) if p.isdigit() else 0 for p in r.get('version','0').split('.'))
+          runtime=sorted(ios,key=key,reverse=True)[0]
+          print(matches[0]['identifier']); print(runtime['identifier']); print(runtime.get('name',runtime['identifier']))
           PY
 
           DEVICE_TYPE="$(sed -n '1p' build/ci-gameplay/simulator-selection.txt)"
           DEVICE_RUNTIME_ID="$(sed -n '2p' build/ci-gameplay/simulator-selection.txt)"
           DEVICE_RUNTIME_NAME="$(sed -n '3p' build/ci-gameplay/simulator-selection.txt)"
-          DEVICE_NAME="ZombiesIOS-CI-iPhone-17-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          DEVICE_NAME="ZombiesIOS-Quake-CI-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           DEVICE_UDID="$(xcrun simctl create "$DEVICE_NAME" "$DEVICE_TYPE" "$DEVICE_RUNTIME_ID")"
-          test -n "$DEVICE_UDID"
-
-          cleanup_simulator() {
+          cleanup() {
             xcrun simctl terminate "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
             xcrun simctl shutdown "$DEVICE_UDID" >/dev/null 2>&1 || true
             xcrun simctl delete "$DEVICE_UDID" >/dev/null 2>&1 || true
           }
-          trap cleanup_simulator EXIT
+          trap cleanup EXIT
+          printf 'name=%s\nudid=%s\nruntime=%s\n' "$DEVICE_NAME" "$DEVICE_UDID" "$DEVICE_RUNTIME_NAME" > build/ci-gameplay/simulator-metadata.txt
 
-          printf 'name=%s\nudid=%s\nruntime=%s\ndevice_type=%s\n' "$DEVICE_NAME" "$DEVICE_UDID" "$DEVICE_RUNTIME_NAME" "$DEVICE_TYPE" > build/ci-gameplay/simulator-metadata.txt
-
-          boot_fresh_simulator() {
+          boot() {
             xcrun simctl boot "$DEVICE_UDID" 2>/dev/null || true
             DEVICE_UDID="$DEVICE_UDID" python3 - <<'PY'
           import os, subprocess
-          subprocess.run(['xcrun','simctl','bootstatus',os.environ['DEVICE_UDID'],'-b'], check=True, timeout=180)
+          subprocess.run(['xcrun','simctl','bootstatus',os.environ['DEVICE_UDID'],'-b'],check=True,timeout=180)
           PY
           }
-
-          if ! boot_fresh_simulator; then
-            echo 'Initial fresh simulator boot failed; erasing and retrying once.' | tee build/ci-gameplay/boot-retry.txt
+          if ! boot; then
             xcrun simctl shutdown "$DEVICE_UDID" >/dev/null 2>&1 || true
             xcrun simctl erase "$DEVICE_UDID"
-            boot_fresh_simulator
+            boot
           fi
 
           xcrun simctl install "$DEVICE_UDID" "$APP_PATH"
-          LAUNCH_OUTPUT="$(xcrun simctl launch "$DEVICE_UDID" "$BUNDLE_ID" --ci-gameplay-validation 2>&1)"
-          echo "$LAUNCH_OUTPUT" | tee build/ci-gameplay/launch-output.txt
-          echo "$LAUNCH_OUTPUT" | grep -Eq "$BUNDLE_ID: [0-9]+"
-
+          xcrun simctl launch "$DEVICE_UDID" "$BUNDLE_ID" --ci-gameplay-validation | tee build/ci-gameplay/launch-output.txt
           sleep 4
           xcrun simctl io "$DEVICE_UDID" screenshot build/ci-gameplay/gameplay-1.png
           sleep 2
           xcrun simctl io "$DEVICE_UDID" screenshot build/ci-gameplay/gameplay-2.png
           DATA_CONTAINER="$(xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" data)"
-          test -f "$DATA_CONTAINER/Documents/ci-render-diagnostics.json"
           cp "$DATA_CONTAINER/Documents/ci-render-diagnostics.json" build/ci-gameplay/ci-render-diagnostics.json
-
           .venv/bin/python Tools/ci_visual_validate.py --screenshot-1 build/ci-gameplay/gameplay-1.png --screenshot-2 build/ci-gameplay/gameplay-2.png --diagnostics build/ci-gameplay/ci-render-diagnostics.json --report build/ci-gameplay/visual-report.json
 
-          DEVICE_UDID="$DEVICE_UDID" python3 - <<'PY' > build/ci-gameplay/simulator.log 2>&1 || true
-          import os, subprocess
-          try:
-              p=subprocess.run(['xcrun','simctl','spawn',os.environ['DEVICE_UDID'],'log','show','--style','compact','--last','30s','--predicate','process == "ZombiesIOS"'], text=True, capture_output=True, timeout=20)
-              print(p.stdout[-200000:]); print(p.stderr[-20000:])
-          except Exception as e:
-              print('log capture failed:', e)
-          PY
-
-      - name: Upload CI gameplay validation evidence
+      - name: Upload CI Quake validation evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ZombiesIOS-ci-validation-evidence
+          name: ZombiesIOS-quake-ci-validation-evidence
           path: build/ci-gameplay
           if-no-files-found: warn
           retention-days: 30
 
       - name: Build unsigned device app
         run: xcodebuild -project ZombiesIOS.xcodeproj -scheme ZombiesIOS -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
-
-      - name: Verify compiled Tranzit decoder path
-        shell: bash
-        run: |
-          set -euo pipefail
-          APP_PATH="$(find build/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -print -quit)"
-          test -n "$APP_PATH"
-          EXECUTABLE="$APP_PATH/ZombiesIOS"; test -f "$EXECUTABLE"
-          STRINGS_FILE="$(mktemp)"; trap 'rm -f "$STRINGS_FILE"' EXIT
-          strings "$EXECUTABLE" > "$STRINGS_FILE"
-          grep -Fq 'TRANZIT GFXWORLD DECODE' "$STRINGS_FILE"
-          if grep -Fq 'Full-map geometry was not selected yet' "$STRINGS_FILE"; then exit 1; fi
 
       - name: Audit built app for non-redistributable content
         shell: bash
@@ -245,5 +176,5 @@ jobs:
           if gh release view latest-build >/dev/null 2>&1; then
             gh release upload latest-build ZombiesIOS-unsigned.ipa --clobber
           else
-            gh release create latest-build ZombiesIOS-unsigned.ipa --target "$GITHUB_SHA" --title "Latest ZombiesIOS IPA" --notes "Unsigned iOS build that passed automated iPhone 17 Simulator gameplay rendering validation. Sign before installing on iPhone."
+            gh release create latest-build ZombiesIOS-unsigned.ipa --target "$GITHUB_SHA" --title "Latest ZombiesIOS IPA" --notes "Unsigned native BO2 Quake iOS runtime build. Retail BO2 assets are user-supplied and are not bundled."
           fi
