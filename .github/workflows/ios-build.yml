@@ -89,8 +89,8 @@ jobs:
           set -euo pipefail
           xcodebuild -project ZombiesIOS.xcodeproj -scheme ZombiesIOS -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build/SimulatorDerivedData CODE_SIGNING_ALLOWED=NO build
 
-      - name: Boot iPhone Simulator and validate gameplay rendering
-        timeout-minutes: 5
+      - name: Boot fresh iPhone 17 Simulator and validate gameplay rendering
+        timeout-minutes: 8
         shell: bash
         run: |
           set -euo pipefail
@@ -99,30 +99,67 @@ jobs:
           test -n "$APP_PATH"
           mkdir -p build/ci-gameplay
 
-          python3 - <<'PY' > build/ci-gameplay/selected-device.txt
+          python3 - <<'PY' > build/ci-gameplay/simulator-selection.txt
           import json, subprocess
-          data=json.loads(subprocess.check_output(['xcrun','simctl','list','devices','available','-j']))
-          candidates=[]
-          for runtime, devices in data.get('devices', {}).items():
-              for d in devices:
-                  if d.get('isAvailable') and d.get('name','').startswith('iPhone'):
-                      score = 3 if '16 Plus' in d['name'] else (2 if ('Plus' in d['name'] or 'Pro Max' in d['name']) else 1)
-                      candidates.append((score, runtime, d['name'], d['udid']))
-          if not candidates: raise SystemExit('No available iPhone Simulator found')
-          score,runtime,name,udid=sorted(candidates, reverse=True)[0]
-          print(udid); print(name); print(runtime)
+
+          device_types = json.loads(subprocess.check_output(['xcrun','simctl','list','devicetypes','-j']))['devicetypes']
+          matches = [d for d in device_types if d.get('name') == 'iPhone 17']
+          if not matches:
+              raise SystemExit('Required iPhone 17 device type is not installed on this runner')
+          device_type = matches[0]['identifier']
+
+          runtimes = json.loads(subprocess.check_output(['xcrun','simctl','list','runtimes','-j']))['runtimes']
+          ios = [r for r in runtimes if r.get('isAvailable') and r.get('platform') == 'iOS']
+          if not ios:
+              ios = [r for r in runtimes if r.get('isAvailable') and 'iOS' in r.get('name','')]
+          if not ios:
+              raise SystemExit('No available iOS Simulator runtime found')
+
+          def version_key(runtime):
+              raw = runtime.get('version', '0')
+              out = []
+              for part in raw.split('.'):
+                  try: out.append(int(part))
+                  except ValueError: out.append(0)
+              return tuple(out)
+
+          runtime = sorted(ios, key=version_key, reverse=True)[0]
+          print(device_type)
+          print(runtime['identifier'])
+          print(runtime.get('name', runtime['identifier']))
           PY
 
-          DEVICE_UDID="$(sed -n '1p' build/ci-gameplay/selected-device.txt)"
-          DEVICE_NAME="$(sed -n '2p' build/ci-gameplay/selected-device.txt)"
-          DEVICE_RUNTIME="$(sed -n '3p' build/ci-gameplay/selected-device.txt)"
-          printf 'name=%s\nudid=%s\nruntime=%s\n' "$DEVICE_NAME" "$DEVICE_UDID" "$DEVICE_RUNTIME" > build/ci-gameplay/simulator-metadata.txt
+          DEVICE_TYPE="$(sed -n '1p' build/ci-gameplay/simulator-selection.txt)"
+          DEVICE_RUNTIME_ID="$(sed -n '2p' build/ci-gameplay/simulator-selection.txt)"
+          DEVICE_RUNTIME_NAME="$(sed -n '3p' build/ci-gameplay/simulator-selection.txt)"
+          DEVICE_NAME="ZombiesIOS-CI-iPhone-17-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          DEVICE_UDID="$(xcrun simctl create "$DEVICE_NAME" "$DEVICE_TYPE" "$DEVICE_RUNTIME_ID")"
+          test -n "$DEVICE_UDID"
 
-          xcrun simctl boot "$DEVICE_UDID" 2>/dev/null || true
-          DEVICE_UDID="$DEVICE_UDID" python3 - <<'PY'
+          cleanup_simulator() {
+            xcrun simctl terminate "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+            xcrun simctl shutdown "$DEVICE_UDID" >/dev/null 2>&1 || true
+            xcrun simctl delete "$DEVICE_UDID" >/dev/null 2>&1 || true
+          }
+          trap cleanup_simulator EXIT
+
+          printf 'name=%s\nudid=%s\nruntime=%s\ndevice_type=%s\n' "$DEVICE_NAME" "$DEVICE_UDID" "$DEVICE_RUNTIME_NAME" "$DEVICE_TYPE" > build/ci-gameplay/simulator-metadata.txt
+
+          boot_fresh_simulator() {
+            xcrun simctl boot "$DEVICE_UDID" 2>/dev/null || true
+            DEVICE_UDID="$DEVICE_UDID" python3 - <<'PY'
           import os, subprocess
-          subprocess.run(['xcrun','simctl','bootstatus',os.environ['DEVICE_UDID'],'-b'], check=True, timeout=120)
+          subprocess.run(['xcrun','simctl','bootstatus',os.environ['DEVICE_UDID'],'-b'], check=True, timeout=180)
           PY
+          }
+
+          if ! boot_fresh_simulator; then
+            echo 'Initial fresh simulator boot failed; erasing and retrying once.' | tee build/ci-gameplay/boot-retry.txt
+            xcrun simctl shutdown "$DEVICE_UDID" >/dev/null 2>&1 || true
+            xcrun simctl erase "$DEVICE_UDID"
+            boot_fresh_simulator
+          fi
+
           xcrun simctl install "$DEVICE_UDID" "$APP_PATH"
           LAUNCH_OUTPUT="$(xcrun simctl launch "$DEVICE_UDID" "$BUNDLE_ID" --ci-gameplay-validation 2>&1)"
           echo "$LAUNCH_OUTPUT" | tee build/ci-gameplay/launch-output.txt
@@ -146,8 +183,6 @@ jobs:
           except Exception as e:
               print('log capture failed:', e)
           PY
-          xcrun simctl terminate "$DEVICE_UDID" "$BUNDLE_ID" || true
-          xcrun simctl shutdown "$DEVICE_UDID" || true
 
       - name: Upload CI gameplay validation evidence
         if: always()
@@ -206,5 +241,5 @@ jobs:
           if gh release view latest-build >/dev/null 2>&1; then
             gh release upload latest-build ZombiesIOS-unsigned.ipa --clobber
           else
-            gh release create latest-build ZombiesIOS-unsigned.ipa --target "$GITHUB_SHA" --title "Latest ZombiesIOS IPA" --notes "Unsigned iOS build that passed automated CI gameplay rendering validation. Sign before installing on iPhone."
+            gh release create latest-build ZombiesIOS-unsigned.ipa --target "$GITHUB_SHA" --title "Latest ZombiesIOS IPA" --notes "Unsigned iOS build that passed automated iPhone 17 Simulator gameplay rendering validation. Sign before installing on iPhone."
           fi
