@@ -1,15 +1,14 @@
 import Foundation
-import SceneKit
 
 struct CIVector3: Codable {
     let x: Float
     let y: Float
     let z: Float
 
-    init(_ v: SCNVector3) {
-        x = v.x
-        y = v.y
-        z = v.z
+    init(_ x: Float, _ y: Float, _ z: Float) {
+        self.x = x
+        self.y = y
+        self.z = z
     }
 }
 
@@ -18,9 +17,9 @@ struct CIRenderDiagnostics: Codable {
     var indexCount: Int = 0
     var triangleCount: Int = 0
     var sceneNodeCount: Int = 0
-    var cameraPosition = CIVector3(SCNVector3Zero)
-    var worldBoundsMin = CIVector3(SCNVector3Zero)
-    var worldBoundsMax = CIVector3(SCNVector3Zero)
+    var cameraPosition = CIVector3(0, 0, 0)
+    var worldBoundsMin = CIVector3(0, 0, 0)
+    var worldBoundsMax = CIVector3(0, 0, 0)
     var worldInFrustum = false
     var frameCount = 0
     var ready = false
