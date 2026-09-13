@@ -35,6 +35,8 @@ struct QuakeGameplayView: View {
                     })
             }
 
+            CrosshairView()
+
             VStack {
                 HStack {
                     Text("BO2 • QUAKE RUNTIME")
@@ -51,7 +53,22 @@ struct QuakeGameplayView: View {
                         .font(.caption2.bold()).padding(14)
                         .background(.ultraThinMaterial, in: Circle())
                     Spacer()
-                    VStack(spacing: 10) {
+                    VStack(alignment: .trailing, spacing: 10) {
+                        VStack(alignment: .trailing, spacing: 2) {
+                            if controller.weaponState.reloading != 0 {
+                                Text("RELOADING")
+                                    .font(.caption2.bold())
+                            }
+                            Text("\(controller.weaponState.magazine) / \(controller.weaponState.reserve)")
+                                .font(.system(size: 24, weight: .semibold, design: .monospaced))
+                            Text("RIFLE")
+                                .font(.caption2.weight(.semibold))
+                                .opacity(0.75)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
+
                         HStack(spacing: 10) {
                             holdButton("AIM") { input.aim = $0 }
                             holdButton("FIRE") { input.fire = $0 }
@@ -82,6 +99,17 @@ struct QuakeGameplayView: View {
         Text(title).font(.caption.bold()).frame(width: 68, height: 50)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
             .gesture(DragGesture(minimumDistance: 0).onChanged { _ in set(true) }.onEnded { _ in set(false) })
+    }
+}
+
+private struct CrosshairView: View {
+    var body: some View {
+        ZStack {
+            Rectangle().frame(width: 14, height: 1)
+            Rectangle().frame(width: 1, height: 14)
+        }
+        .opacity(0.8)
+        .allowsHitTesting(false)
     }
 }
 
@@ -117,7 +145,7 @@ struct QuakeMetalWorldView: UIViewRepresentable {
     final class Renderer: NSObject, MTKViewDelegate {
         private struct CameraUniforms {
             var position: SIMD4<Float>
-            var params: SIMD4<Float> // yaw radians, pitch radians, aspect, vertical FOV tangent
+            var params: SIMD4<Float>
         }
 
         private var queue: MTLCommandQueue?
