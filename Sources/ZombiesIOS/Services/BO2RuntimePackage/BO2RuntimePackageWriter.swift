@@ -18,8 +18,23 @@ struct BO2RuntimePackageWriter {
         return BO2RuntimePackage(sourceName: sourceName, vertices: vertices, indices: indices, spawns: spawns, entities: entities)
     }
 
+    func makePackage(mesh: T6WorldRuntimeMesh, entities: [BO2RuntimeEntity] = [], spawns: [BO2RuntimeSpawn] = [], sourceName: String) throws -> BO2RuntimePackage {
+        guard !mesh.vertices.isEmpty, mesh.indices.count >= 3 else { throw WriterError.emptyGeometry }
+        let vertices = mesh.vertices.map { BO2RuntimeVertex(x: $0.x, y: $0.y, z: $0.z) }
+        return BO2RuntimePackage(sourceName: sourceName, vertices: vertices, indices: mesh.indices, spawns: spawns, entities: entities)
+    }
+
     func write(mesh: T6RuntimeMesh, entities: [BO2RuntimeEntity] = [], spawns: [BO2RuntimeSpawn] = [], sourceName: String) throws -> URL {
         let package = try makePackage(mesh: mesh, entities: entities, spawns: spawns, sourceName: sourceName)
+        return try writePackage(package, sourceName: sourceName)
+    }
+
+    func write(mesh: T6WorldRuntimeMesh, entities: [BO2RuntimeEntity] = [], spawns: [BO2RuntimeSpawn] = [], sourceName: String) throws -> URL {
+        let package = try makePackage(mesh: mesh, entities: entities, spawns: spawns, sourceName: sourceName)
+        return try writePackage(package, sourceName: sourceName)
+    }
+
+    private func writePackage(_ package: BO2RuntimePackage, sourceName: String) throws -> URL {
         let root = try RuntimeCachePolicy.expressiveDirectory()
         let safeName = sourceName.replacingOccurrences(of: "/", with: "_")
         let directory = root.appendingPathComponent("bo2world-v1-\(safeName)", isDirectory: true)
