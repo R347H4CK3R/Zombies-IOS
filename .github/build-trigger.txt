@@ -67,3 +67,4 @@ iphone17-visual-validation 2026-09-12T13:45:00-05:00
 iphone17-boot-timeout-retry 2026-09-12T13:55:00-05:00
 t6-gfxsurface-layout-fix 2026-09-12T14:33:00-05:00
 fresh-iphone17-main-validation 2026-09-13T13:32:00-05:00
+bo2-quake-primary-runtime 2026-09-13T14:05:00-05:00
