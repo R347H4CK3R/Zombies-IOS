@@ -100,6 +100,31 @@ static int ray_triangle(zq3_vec3 origin, zq3_vec3 direction, const float *av, co
     return 1;
 }
 
+static int world_blocks_motion(zq3_vec3 origin, float dx, float dz) {
+    if (!g.vertices || !g.indices) return 0;
+    float distance = sqrtf(dx * dx + dz * dz);
+    if (distance < 0.000001f) return 0;
+    zq3_vec3 dir = {dx / distance, 0.0f, dz / distance};
+    const float body_radius = 0.28f;
+    const float probes[] = {0.0f, -0.75f, -1.35f};
+
+    for (size_t p = 0; p < sizeof(probes) / sizeof(probes[0]); ++p) {
+        zq3_vec3 ray_origin = origin;
+        ray_origin.y += probes[p];
+        for (size_t i = 0; i + 2 < g.index_count; i += 3) {
+            uint32_t ia = g.indices[i], ib = g.indices[i + 1], ic = g.indices[i + 2];
+            if (ia >= g.vertex_count || ib >= g.vertex_count || ic >= g.vertex_count) continue;
+            const float *a = &g.vertices[(size_t)ia * 3];
+            const float *b = &g.vertices[(size_t)ib * 3];
+            const float *c = &g.vertices[(size_t)ic * 3];
+            if (triangle_is_walkable(a, b, c)) continue;
+            float t;
+            if (ray_triangle(ray_origin, dir, a, b, c, &t) && t <= distance + body_radius) return 1;
+        }
+    }
+    return 0;
+}
+
 static void world_hitscan(void) {
     g.weapon.last_shot_hit = 0;
     g.weapon.last_hit_distance = 0.0f;
@@ -227,9 +252,20 @@ void zq3_step(float seconds) {
         g.player.on_ground = 0;
     }
     g.player.velocity.y -= 15.0f * dt;
-    g.player.origin.x += g.player.velocity.x * dt;
+
+    float dx = g.player.velocity.x * dt;
+    float dz = g.player.velocity.z * dt;
+    if (!world_blocks_motion(g.player.origin, dx, 0.0f)) {
+        g.player.origin.x += dx;
+    } else {
+        g.player.velocity.x = 0.0f;
+    }
+    if (!world_blocks_motion(g.player.origin, 0.0f, dz)) {
+        g.player.origin.z += dz;
+    } else {
+        g.player.velocity.z = 0.0f;
+    }
     g.player.origin.y += g.player.velocity.y * dt;
-    g.player.origin.z += g.player.velocity.z * dt;
 
     const float player_height = 1.7f;
     const float step_height = 0.75f;
