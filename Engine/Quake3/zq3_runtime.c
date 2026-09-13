@@ -1,20 +1,59 @@
 #include "zq3_runtime.h"
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 static struct {
     int initialized;
     zq3_input input;
     zq3_player_state player;
-    const float *vertices;
+    float *vertices;
     size_t vertex_count;
-    const uint32_t *indices;
+    uint32_t *indices;
     size_t index_count;
 } g;
 
 static float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
+static void free_world(void) {
+    free(g.vertices); g.vertices = NULL; g.vertex_count = 0;
+    free(g.indices); g.indices = NULL; g.index_count = 0;
+}
+
+static int barycentric_height(float px, float pz, const float *a, const float *b, const float *c, float *out_y) {
+    float v0x = b[0] - a[0], v0z = b[2] - a[2];
+    float v1x = c[0] - a[0], v1z = c[2] - a[2];
+    float v2x = px - a[0], v2z = pz - a[2];
+    float den = v0x * v1z - v1x * v0z;
+    if (fabsf(den) < 0.000001f) return 0;
+    float u = (v2x * v1z - v1x * v2z) / den;
+    float v = (v0x * v2z - v2x * v0z) / den;
+    if (u < -0.001f || v < -0.001f || u + v > 1.001f) return 0;
+    *out_y = a[1] + u * (b[1] - a[1]) + v * (c[1] - a[1]);
+    return 1;
+}
+
+static int world_floor(float x, float z, float max_y, float *floor_y) {
+    if (!g.vertices || !g.indices) return 0;
+    int found = 0;
+    float best = -INFINITY;
+    for (size_t i = 0; i + 2 < g.index_count; i += 3) {
+        uint32_t ia = g.indices[i], ib = g.indices[i + 1], ic = g.indices[i + 2];
+        if (ia >= g.vertex_count || ib >= g.vertex_count || ic >= g.vertex_count) continue;
+        const float *a = &g.vertices[(size_t)ia * 3];
+        const float *b = &g.vertices[(size_t)ib * 3];
+        const float *c = &g.vertices[(size_t)ic * 3];
+        float y;
+        if (barycentric_height(x, z, a, b, c, &y) && y <= max_y && y > best) {
+            best = y; found = 1;
+        }
+    }
+    if (found) *floor_y = best;
+    return found;
+}
+
 int zq3_init(void) {
+    free_world();
     memset(&g, 0, sizeof(g));
     g.initialized = 1;
     g.player.origin = (zq3_vec3){0.0f, 2.0f, 0.0f};
@@ -23,12 +62,21 @@ int zq3_init(void) {
 
 int zq3_load_world(const float *xyz, size_t vertex_count, const uint32_t *indices, size_t index_count, zq3_vec3 spawn) {
     if (!g.initialized || !xyz || !indices || vertex_count < 3 || index_count < 3) return 0;
-    g.vertices = xyz;
+    free_world();
+    g.vertices = (float *)malloc(vertex_count * 3 * sizeof(float));
+    g.indices = (uint32_t *)malloc(index_count * sizeof(uint32_t));
+    if (!g.vertices || !g.indices) { free_world(); return 0; }
+    memcpy(g.vertices, xyz, vertex_count * 3 * sizeof(float));
+    memcpy(g.indices, indices, index_count * sizeof(uint32_t));
     g.vertex_count = vertex_count;
-    g.indices = indices;
     g.index_count = index_count;
     g.player.origin = spawn;
     g.player.velocity = (zq3_vec3){0,0,0};
+    float floor_y;
+    if (world_floor(spawn.x, spawn.z, spawn.y + 64.0f, &floor_y) && spawn.y < floor_y + 1.7f) {
+        g.player.origin.y = floor_y + 1.7f;
+        g.player.on_ground = 1;
+    }
     return 1;
 }
 
@@ -55,13 +103,25 @@ void zq3_step(float seconds) {
     g.player.origin.y += g.player.velocity.y * dt;
     g.player.origin.z += g.player.velocity.z * dt;
 
-    /* Initial collision boundary: ground plane. Triangle-world collision is layered here. */
-    if (g.player.origin.y < 1.7f) {
-        g.player.origin.y = 1.7f;
-        if (g.player.velocity.y < 0) g.player.velocity.y = 0;
-        g.player.on_ground = 1;
+    float floor_y;
+    const float feet = 1.7f;
+    if (world_floor(g.player.origin.x, g.player.origin.z, g.player.origin.y + 2.5f, &floor_y)) {
+        float standing_y = floor_y + feet;
+        if (g.player.origin.y <= standing_y && g.player.velocity.y <= 0.0f) {
+            g.player.origin.y = standing_y;
+            g.player.velocity.y = 0.0f;
+            g.player.on_ground = 1;
+        } else if (g.player.origin.y > standing_y + 0.05f) {
+            g.player.on_ground = 0;
+        }
+    } else {
+        g.player.on_ground = 0;
     }
 }
 
 zq3_player_state zq3_get_player_state(void) { return g.player; }
-void zq3_shutdown(void) { memset(&g, 0, sizeof(g)); }
+
+void zq3_shutdown(void) {
+    free_world();
+    memset(&g, 0, sizeof(g));
+}
