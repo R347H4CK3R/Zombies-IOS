@@ -1,0 +1,21 @@
+name: BO2 Quake Clean Rebuild
+
+on:
+  push:
+    branches: [ feature/bo2-quake-clean-rebuild ]
+    paths:
+      - 'Clean/BO2Quake/**'
+      - '.github/workflows/bo2-clean.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clean project boundary tests
+        run: python3 -m unittest Clean.BO2Quake.Tools.tests.test_clean_project_boundary -v
