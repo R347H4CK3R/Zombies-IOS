@@ -66,6 +66,19 @@ class BO2QuakePrimaryRuntimeTests(unittest.TestCase):
         self.assertIn("SIMD3<Float>($0.x, $0.z, -$0.y)", extractor)
         self.assertIn("BO2RuntimeVertex(x: bo2.x, y: bo2.z, z: -bo2.y)", parser)
 
+    def test_hijacked_ipak_has_native_index_and_lzo_decoder(self):
+        decoder = ROOT / "Sources/ZombiesIOS/Services/T6IPAKArchive.swift"
+        loader = ROOT / "Sources/ZombiesIOS/Services/BO2MapRuntimeLoader.swift"
+        self.assertTrue(decoder.exists())
+        text = decoder.read_text()
+        self.assertIn('magic == "IPAK"', text)
+        self.assertIn("parseSegments", text)
+        self.assertIn("parseEntries", text)
+        self.assertIn("lzo1xDecompress", text)
+        self.assertIn("decodeEntry", text)
+        self.assertIn("0x7F", text)
+        self.assertIn("T6IPAKArchive", loader.read_text())
+
     def test_hijacked_is_primary_map_target(self):
         target = ROOT / "Sources/ZombiesIOS/Models/BO2MapTarget.swift"
         loader = ROOT / "Sources/ZombiesIOS/Services/BO2MapRuntimeLoader.swift"
