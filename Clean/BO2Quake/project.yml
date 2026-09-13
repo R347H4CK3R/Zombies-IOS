@@ -15,6 +15,7 @@ targets:
     dependencies:
       - sdk: Metal.framework
       - sdk: MetalKit.framework
+      - sdk: AVFoundation.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.r347h4ck3r.bo2quake
