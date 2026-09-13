@@ -43,6 +43,10 @@ int main(void) {
     assert(s.origin.y > 1.7f);
     assert(s.velocity.y > 0.0f);
 
+    zq3_shutdown();
+    assert(zq3_init() == 1);
+    assert(zq3_load_world(v, 8, i, sizeof(i)/sizeof(i[0]), spawn) == 1);
+
     zq3_weapon_state w = zq3_get_weapon_state();
     assert(w.magazine == 30);
     assert(w.reserve == 120);
@@ -55,6 +59,9 @@ int main(void) {
     w = zq3_get_weapon_state();
     assert(w.magazine == 29);
     assert(w.shots_fired == 1);
+    assert(w.last_shot_hit == 1);
+    assert(w.last_hit_distance > 7.9f && w.last_hit_distance < 8.1f);
+    assert(nearf(w.last_hit_position.z, 8.0f, 0.01f));
 
     for (int n = 0; n < 30; ++n) zq3_step(1.0f/60.0f);
     w = zq3_get_weapon_state();
