@@ -1,4 +1,5 @@
 import Foundation
+import QuartzCore
 
 @MainActor
 final class QuakeRuntimeController: ObservableObject {
