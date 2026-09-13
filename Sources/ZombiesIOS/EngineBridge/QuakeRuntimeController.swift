@@ -15,6 +15,7 @@ final class QuakeRuntimeController: ObservableObject {
     }
 
     @Published private(set) var playerState = zq3_player_state()
+    @Published private(set) var weaponState = zq3_weapon_state()
     @Published private(set) var runtimeError: String?
 
     let package: BO2RuntimePackage
@@ -26,8 +27,8 @@ final class QuakeRuntimeController: ObservableObject {
             runtimeError = "Quake runtime initialization failed."
             return
         }
-        var xyz = package.vertices.flatMap { [$0.x, $0.y, $0.z] }
-        var indices = package.indices
+        let xyz = package.vertices.flatMap { [$0.x, $0.y, $0.z] }
+        let indices = package.indices
         let initial = Self.validatedSpawn(in: package) ?? BO2RuntimeVertex(x: 0, y: 2, z: 0)
         let spawn = zq3_vec3(x: initial.x, y: initial.y, z: initial.z)
         let loaded = xyz.withUnsafeBufferPointer { v in
@@ -37,6 +38,7 @@ final class QuakeRuntimeController: ObservableObject {
         }
         if loaded == 0 { runtimeError = "Quake runtime rejected the converted BO2 world." }
         playerState = zq3_get_player_state()
+        weaponState = zq3_get_weapon_state()
     }
 
     deinit { zq3_shutdown() }
@@ -60,6 +62,7 @@ final class QuakeRuntimeController: ObservableObject {
         lastFrameTime = now
         zq3_step(dt)
         playerState = zq3_get_player_state()
+        weaponState = zq3_get_weapon_state()
     }
 
     private static func validatedSpawn(in package: BO2RuntimePackage) -> BO2RuntimeVertex? {
