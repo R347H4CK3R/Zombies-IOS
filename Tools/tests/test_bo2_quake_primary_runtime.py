@@ -46,6 +46,18 @@ class BO2QuakePrimaryRuntimeTests(unittest.TestCase):
         self.assertIn("excludes:", project)
         self.assertIn("- tests", project)
 
+    def test_native_weapon_state_reaches_hud(self):
+        header = (ROOT / "Engine/Quake3/zq3_runtime.h").read_text()
+        controller = (ROOT / "Sources/ZombiesIOS/EngineBridge/QuakeRuntimeController.swift").read_text()
+        view = (ROOT / "Sources/ZombiesIOS/Views/QuakeGameplayView.swift").read_text()
+        self.assertIn("zq3_weapon_state", header)
+        self.assertIn("zq3_get_weapon_state", header)
+        self.assertIn("weaponState", controller)
+        self.assertIn("zq3_get_weapon_state()", controller)
+        self.assertIn("weaponState.magazine", view)
+        self.assertIn("weaponState.reserve", view)
+        self.assertIn("RELOADING", view)
+
     def test_hijacked_is_primary_map_target(self):
         target = ROOT / "Sources/ZombiesIOS/Models/BO2MapTarget.swift"
         loader = ROOT / "Sources/ZombiesIOS/Services/BO2MapRuntimeLoader.swift"
