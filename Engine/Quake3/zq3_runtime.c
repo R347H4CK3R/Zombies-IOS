@@ -7,6 +7,7 @@ static struct {
     int initialized;
     zq3_input input;
     zq3_player_state player;
+    zq3_weapon_state weapon;
     float *vertices;
     size_t vertex_count;
     uint32_t *indices;
@@ -18,6 +19,15 @@ static float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi 
 static void free_world(void) {
     free(g.vertices); g.vertices = NULL; g.vertex_count = 0;
     free(g.indices); g.indices = NULL; g.index_count = 0;
+}
+
+static void reset_weapon(void) {
+    g.weapon.magazine = 30;
+    g.weapon.reserve = 120;
+    g.weapon.shots_fired = 0;
+    g.weapon.reloading = 0;
+    g.weapon.reload_remaining = 0.0f;
+    g.weapon.shot_cooldown = 0.0f;
 }
 
 static int barycentric_height(float px, float pz, const float *a, const float *b, const float *c, float *out_y) {
@@ -41,8 +51,6 @@ static int triangle_is_walkable(const float *a, const float *b, const float *c) 
     float nz = abx * acy - aby * acx;
     float length = sqrtf(nx * nx + ny * ny + nz * nz);
     if (length < 0.000001f) return 0;
-    /* Winding differs across imported surfaces; use absolute up component.
-       0.65 rejects walls/steep faces while retaining ordinary ramps/stairs. */
     return fabsf(ny) / length >= 0.65f;
 }
 
@@ -66,11 +74,45 @@ static int world_floor(float x, float z, float max_y, float *floor_y) {
     return found;
 }
 
+static void step_weapon(float dt) {
+    const float reload_seconds = 1.9f;
+    const float fire_interval = 0.095f;
+
+    if (g.weapon.shot_cooldown > 0.0f) {
+        g.weapon.shot_cooldown = fmaxf(0.0f, g.weapon.shot_cooldown - dt);
+    }
+
+    if (!g.weapon.reloading && g.input.reload && g.weapon.magazine < 30 && g.weapon.reserve > 0) {
+        g.weapon.reloading = 1;
+        g.weapon.reload_remaining = reload_seconds;
+    }
+
+    if (g.weapon.reloading) {
+        g.weapon.reload_remaining -= dt;
+        if (g.weapon.reload_remaining <= 0.0f) {
+            int needed = 30 - g.weapon.magazine;
+            int transferred = needed < g.weapon.reserve ? needed : g.weapon.reserve;
+            g.weapon.magazine += transferred;
+            g.weapon.reserve -= transferred;
+            g.weapon.reloading = 0;
+            g.weapon.reload_remaining = 0.0f;
+        }
+        return;
+    }
+
+    if (g.input.fire && g.weapon.magazine > 0 && g.weapon.shot_cooldown <= 0.0f) {
+        g.weapon.magazine -= 1;
+        g.weapon.shots_fired += 1;
+        g.weapon.shot_cooldown = fire_interval;
+    }
+}
+
 int zq3_init(void) {
     free_world();
     memset(&g, 0, sizeof(g));
     g.initialized = 1;
     g.player.origin = (zq3_vec3){0.0f, 2.0f, 0.0f};
+    reset_weapon();
     return 1;
 }
 
@@ -86,6 +128,7 @@ int zq3_load_world(const float *xyz, size_t vertex_count, const uint32_t *indice
     g.index_count = index_count;
     g.player.origin = spawn;
     g.player.velocity = (zq3_vec3){0,0,0};
+    reset_weapon();
 
     const float player_height = 1.7f;
     const float step_height = 0.75f;
@@ -140,9 +183,12 @@ void zq3_step(float seconds) {
     } else {
         g.player.on_ground = 0;
     }
+
+    step_weapon(dt);
 }
 
 zq3_player_state zq3_get_player_state(void) { return g.player; }
+zq3_weapon_state zq3_get_weapon_state(void) { return g.weapon; }
 
 void zq3_shutdown(void) {
     free_world();
