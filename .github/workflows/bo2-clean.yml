@@ -21,6 +21,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      - name: Install converter test dependencies
+        run: python3 -m pip install --user pillow
       - name: Clean rebuild test suite
         run: python3 -m unittest discover -s Clean/BO2Quake/Tools/tests -v
       - name: Public content audit
