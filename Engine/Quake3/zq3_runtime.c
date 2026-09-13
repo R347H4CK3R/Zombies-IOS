@@ -33,6 +33,19 @@ static int barycentric_height(float px, float pz, const float *a, const float *b
     return 1;
 }
 
+static int triangle_is_walkable(const float *a, const float *b, const float *c) {
+    float abx = b[0] - a[0], aby = b[1] - a[1], abz = b[2] - a[2];
+    float acx = c[0] - a[0], acy = c[1] - a[1], acz = c[2] - a[2];
+    float nx = aby * acz - abz * acy;
+    float ny = abz * acx - abx * acz;
+    float nz = abx * acy - aby * acx;
+    float length = sqrtf(nx * nx + ny * ny + nz * nz);
+    if (length < 0.000001f) return 0;
+    /* Winding differs across imported surfaces; use absolute up component.
+       0.65 rejects walls/steep faces while retaining ordinary ramps/stairs. */
+    return fabsf(ny) / length >= 0.65f;
+}
+
 static int world_floor(float x, float z, float max_y, float *floor_y) {
     if (!g.vertices || !g.indices) return 0;
     int found = 0;
@@ -43,6 +56,7 @@ static int world_floor(float x, float z, float max_y, float *floor_y) {
         const float *a = &g.vertices[(size_t)ia * 3];
         const float *b = &g.vertices[(size_t)ib * 3];
         const float *c = &g.vertices[(size_t)ic * 3];
+        if (!triangle_is_walkable(a, b, c)) continue;
         float y;
         if (barycentric_height(x, z, a, b, c, &y) && y <= max_y && y > best) {
             best = y; found = 1;
@@ -72,10 +86,17 @@ int zq3_load_world(const float *xyz, size_t vertex_count, const uint32_t *indice
     g.index_count = index_count;
     g.player.origin = spawn;
     g.player.velocity = (zq3_vec3){0,0,0};
+
+    const float player_height = 1.7f;
+    const float step_height = 0.75f;
     float floor_y;
-    if (world_floor(spawn.x, spawn.z, spawn.y + 64.0f, &floor_y) && spawn.y < floor_y + 1.7f) {
-        g.player.origin.y = floor_y + 1.7f;
-        g.player.on_ground = 1;
+    float floor_query_max = spawn.y - player_height + step_height;
+    if (world_floor(spawn.x, spawn.z, floor_query_max, &floor_y)) {
+        float standing_y = floor_y + player_height;
+        if (spawn.y <= standing_y + step_height) {
+            g.player.origin.y = standing_y;
+            g.player.on_ground = 1;
+        }
     }
     return 1;
 }
@@ -103,10 +124,12 @@ void zq3_step(float seconds) {
     g.player.origin.y += g.player.velocity.y * dt;
     g.player.origin.z += g.player.velocity.z * dt;
 
+    const float player_height = 1.7f;
+    const float step_height = 0.75f;
     float floor_y;
-    const float feet = 1.7f;
-    if (world_floor(g.player.origin.x, g.player.origin.z, g.player.origin.y + 2.5f, &floor_y)) {
-        float standing_y = floor_y + feet;
+    float floor_query_max = g.player.origin.y - player_height + step_height;
+    if (world_floor(g.player.origin.x, g.player.origin.z, floor_query_max, &floor_y)) {
+        float standing_y = floor_y + player_height;
         if (g.player.origin.y <= standing_y && g.player.velocity.y <= 0.0f) {
             g.player.origin.y = standing_y;
             g.player.velocity.y = 0.0f;
