@@ -4,6 +4,9 @@ import sys
 BLOCKED_SUFFIXES = {'.ff', '.ipak', '.sabs', '.xpak'}
 BLOCKED_NAMES = {'GameData'}
 BLOCKED_MARKERS = (b'TAff0100', b'IPAK')
+TEXT_SOURCE_SUFFIXES = {
+    '.py', '.swift', '.c', '.h', '.m', '.mm', '.metal', '.md', '.txt', '.json', '.yml', '.yaml', '.plist'
+}
 
 
 def scan(root: Path) -> list[str]:
@@ -14,8 +17,11 @@ def scan(root: Path) -> list[str]:
             continue
         if not path.is_file():
             continue
-        if path.suffix.lower() in BLOCKED_SUFFIXES:
+        suffix = path.suffix.lower()
+        if suffix in BLOCKED_SUFFIXES:
             failures.append(f'blocked retail extension: {path}')
+            continue
+        if suffix in TEXT_SOURCE_SUFFIXES:
             continue
         try:
             head = path.read_bytes()[:512]
