@@ -7,16 +7,23 @@ from typing import Iterable
 
 PACKAGE_DIRS = {
     'world': 'worlds',
+    'collision': 'collision',
     'material': 'materials',
     'texture': 'textures',
     'model': 'models',
     'animation': 'animations',
     'audio': 'audio',
     'weapon': 'weapons',
+    'attachment': 'attachments',
+    'effect': 'effects',
     'entity': 'entities',
     'script': 'scripts',
     'gamemode': 'gamemodes',
+    'ai': 'ai',
+    'vehicle': 'vehicles',
     'ui': 'ui',
+    'localization': 'localization',
+    'cinematic': 'cinematics',
 }
 FORMAT_VERSION = 1
 
@@ -82,6 +89,9 @@ class GameDataBuilder:
 
     def finalize(self, required_classes: Iterable[str]) -> dict:
         required = sorted(set(required_classes))
+        unknown = [kind for kind in required if kind not in PACKAGE_DIRS]
+        if unknown:
+            raise ValueError(f'unknown required runtime asset classes: {unknown}')
         manifest = _build_manifest(self.root, self.assets, required)
         (self.root / 'manifest.json').write_text(
             json.dumps(manifest, sort_keys=True, separators=(',', ':')) + '\n'
@@ -136,12 +146,20 @@ def validate_gamedata(root: Path) -> dict:
 
     assets = {asset.get('id'): asset for asset in manifest.get('assets', []) if asset.get('id')}
     for asset_id, asset in assets.items():
+        kind = asset.get('kind')
+        if kind not in PACKAGE_DIRS:
+            failures.append(f'{asset_id}: unsupported asset kind {kind}')
         for dependency in asset.get('dependencies', []):
             if dependency not in assets:
                 failures.append(f'{asset_id}: missing dependency {dependency}')
         for payload in asset.get('payloads', []):
             relative = payload.get('path', '')
             target = root / relative
+            try:
+                target.resolve().relative_to(root.resolve())
+            except ValueError:
+                failures.append(f'{asset_id}: payload escapes GameData root {relative}')
+                continue
             if not target.is_file():
                 failures.append(f'{asset_id}: missing payload {relative}')
                 continue
@@ -152,6 +170,8 @@ def validate_gamedata(root: Path) -> dict:
                 failures.append(f'{asset_id}: hash mismatch {relative}')
 
     for kind, state in manifest.get('completion', {}).items():
+        if kind not in PACKAGE_DIRS:
+            failures.append(f'unknown completion asset class {kind}')
         if state.get('required') and not state.get('complete'):
             failures.append(f'missing required asset class {kind}')
 
