@@ -43,6 +43,36 @@ int main(void) {
     assert(s.origin.y > 1.7f);
     assert(s.velocity.y > 0.0f);
 
+    zq3_weapon_state w = zq3_get_weapon_state();
+    assert(w.magazine == 30);
+    assert(w.reserve == 120);
+    assert(w.shots_fired == 0);
+
+    zq3_input fire = {0};
+    fire.fire = 1;
+    zq3_set_input(fire);
+    zq3_step(1.0f/60.0f);
+    w = zq3_get_weapon_state();
+    assert(w.magazine == 29);
+    assert(w.shots_fired == 1);
+
+    for (int n = 0; n < 30; ++n) zq3_step(1.0f/60.0f);
+    w = zq3_get_weapon_state();
+    assert(w.magazine < 29);
+    assert(w.shots_fired > 1);
+
+    zq3_input reload = {0};
+    reload.reload = 1;
+    zq3_set_input(reload);
+    zq3_step(1.0f/60.0f);
+    w = zq3_get_weapon_state();
+    assert(w.reloading == 1);
+    for (int n = 0; n < 130; ++n) zq3_step(1.0f/60.0f);
+    w = zq3_get_weapon_state();
+    assert(w.reloading == 0);
+    assert(w.magazine == 30);
+    assert(w.reserve < 120);
+
     zq3_shutdown();
     puts("zq3 runtime smoke test passed");
     return 0;
