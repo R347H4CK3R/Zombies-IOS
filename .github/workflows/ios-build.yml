@@ -1,10 +1,10 @@
-# Manual build plus CI gameplay-validation branch.
+# Native Quake/BO2 iOS build and gameplay validation.
 name: Build iOS IPA
 
 on:
   workflow_dispatch:
   push:
-    branches: [ main, ci-gameplay-validation-final ]
+    branches: [ main, ci-gameplay-validation-final, feature/bo2-quake3-ios-runtime ]
     paths:
       - '.github/build-trigger.txt'
 
@@ -18,16 +18,13 @@ concurrency:
 jobs:
   build:
     runs-on: macos-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Test redistribution content audit
-        run: python3 -m unittest Tools.tests.test_content_audit -v
-
-      - name: Test T6 GfxSurface layout
-        run: python3 -m unittest Tools.tests.test_t6_gfxsurface_layout -v
+      - name: Run source and native runtime tests
+        run: python3 -m unittest discover -s Tools/tests -v
 
       - name: Prepare CI visual test environment
         run: |
@@ -41,45 +38,46 @@ jobs:
       - name: Audit source tree for non-redistributable content
         run: python3 Tools/content_audit.py . --allowlist Tools/content_allowlist.txt
 
-      - name: Validate runtime source boundary
+      - name: Validate Quake runtime source boundary
         shell: bash
         run: |
           set -euo pipefail
-          test -f Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift
-          test -f Sources/ZombiesIOS/Services/ExternalGameFolderStore.swift
-          test -f Sources/ZombiesIOS/Services/RuntimeCachePolicy.swift
-          test -f Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift
-          test -f Sources/ZombiesIOS/Views/NativeFPSSceneView.swift
-          test -f Sources/ZombiesIOS/Support/CIValidationMode.swift
+          test -f Engine/Quake3/zq3_runtime.c
+          test -f Engine/Quake3/zq3_runtime.h
+          test -f Engine/Quake3/COPYING.txt
+          test -f Sources/ZombiesIOS/Services/BO2RuntimePackage/BO2RuntimePackage.swift
+          test -f Sources/ZombiesIOS/Services/BO2RuntimePackage/BO2RuntimePackageWriter.swift
+          test -f Sources/ZombiesIOS/Services/BO2RuntimePackage/BO2EntityParser.swift
+          test -f Sources/ZombiesIOS/Services/BO2MapRuntimeLoader.swift
+          test -f Sources/ZombiesIOS/EngineBridge/QuakeRuntimeController.swift
+          test -f Sources/ZombiesIOS/Views/QuakeGameplayView.swift
+          test -f Sources/ZombiesIOS/Views/HijackedTouchGameplayView.swift
           test -f Sources/ZombiesIOS/Support/CIRuntimeMeshFixture.swift
           test -f Sources/ZombiesIOS/Support/CIRenderDiagnostics.swift
           test -f Sources/ZombiesIOS/Views/CIGameplayValidationEntryView.swift
           grep -Fq -- '--ci-gameplay-validation' Sources/ZombiesIOS/Support/CIValidationMode.swift
           grep -Fq 'ZOMBIESIOS_CI_GAMEPLAY' Sources/ZombiesIOS/Support/CIValidationMode.swift
-          grep -Fq 'CIValidationMode.isEnabled' Sources/ZombiesIOS/ZombiesIOSApp.swift
-          grep -Fq 'ContentView()' Sources/ZombiesIOS/ZombiesIOSApp.swift
-          grep -Fq 'Choose BO2 Game Folder' Sources/ZombiesIOS/ContentView.swift
-          grep -Fq 'CI-FIXTURE' Sources/ZombiesIOS/Support/CIRuntimeMeshFixture.swift
+          grep -Fq 'QuakeGameplayView' Sources/ZombiesIOS/Views/CIGameplayValidationEntryView.swift
+          grep -Fq 'MTKView' Sources/ZombiesIOS/Views/QuakeGameplayView.swift
+          grep -Fq 'zq3_load_world' Engine/Quake3/zq3_runtime.c
+          grep -Fq 'mp_hijacked.ff' Sources/ZombiesIOS/Models/BO2MapTarget.swift
+          grep -Fq 'mp_hijacked.ipak' Sources/ZombiesIOS/Models/BO2MapTarget.swift
+          grep -Fq 'mpl_hijacked.all.sabs' Sources/ZombiesIOS/Models/BO2MapTarget.swift
+          if grep -Fq 'NativeFPSSceneView' Sources/ZombiesIOS/Views/CIGameplayValidationEntryView.swift; then exit 1; fi
 
-      - name: Validate Tranzit GfxWorld path
+      - name: Validate T6 extraction path
         shell: bash
         run: |
           set -euo pipefail
-          GAMEPLAY='Sources/ZombiesIOS/Views/TranzitTouchGameplayView.swift'
           EXTRACTOR='Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift'
-          SCENE='Sources/ZombiesIOS/Views/NativeFPSSceneView.swift'
-          grep -Fq '128 * 1024 * 1024' "$GAMEPLAY"
-          grep -Fq 'TRANZIT GFXWORLD DECODE' "$GAMEPLAY"
-          grep -Fq 'T6GfxSurfaceMeshExtractor.extract' "$GAMEPLAY"
-          grep -Fq 'mesh != nil { score += 50_000 }' "$GAMEPLAY"
-          if grep -Fq 'T6MeshPreviewExtractor.extract' "$GAMEPLAY"; then exit 1; fi
-          if grep -Fq 'buildFallbackArena' "$SCENE"; then exit 1; fi
+          LOADER='Sources/ZombiesIOS/Services/BO2MapRuntimeLoader.swift'
           grep -Fq 'firstVertex = Int(Int32(bitPattern: be32(bytes, offset + 0x20)))' "$EXTRACTOR"
-          grep -Fq 'himipRadiusInvSq = beFloat(bytes, offset + 0x24)' "$EXTRACTOR"
           grep -Fq 'vertexCount = Int(be16(bytes, offset + 0x28))' "$EXTRACTOR"
           grep -Fq 'triCount = Int(be16(bytes, offset + 0x2A))' "$EXTRACTOR"
           grep -Fq 'baseIndex = Int(Int32(bitPattern: be32(bytes, offset + 0x2C)))' "$EXTRACTOR"
-          grep -Fq 'GFXWORLD:BE REAL' "$EXTRACTOR"
+          grep -Fq 'T6PS3PayloadDecoder' "$LOADER"
+          grep -Fq 'T6GfxSurfaceMeshExtractor.extract' "$LOADER"
+          if grep -Fq 'T6GfxBoundsFallbackExtractor' "$LOADER"; then exit 1; fi
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -93,7 +91,7 @@ jobs:
           set -euo pipefail
           xcodebuild -project ZombiesIOS.xcodeproj -scheme ZombiesIOS -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build/SimulatorDerivedData CODE_SIGNING_ALLOWED=NO build
 
-      - name: Boot iPhone 17 Simulator and validate gameplay rendering
+      - name: Boot iPhone 17 Simulator and validate Quake rendering
         timeout-minutes: 7
         shell: bash
         run: |
@@ -175,7 +173,7 @@ jobs:
       - name: Build unsigned device app
         run: xcodebuild -project ZombiesIOS.xcodeproj -scheme ZombiesIOS -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
 
-      - name: Verify compiled Tranzit decoder path
+      - name: Verify compiled native runtime
         shell: bash
         run: |
           set -euo pipefail
@@ -184,8 +182,10 @@ jobs:
           EXECUTABLE="$APP_PATH/ZombiesIOS"; test -f "$EXECUTABLE"
           STRINGS_FILE="$(mktemp)"; trap 'rm -f "$STRINGS_FILE"' EXIT
           strings "$EXECUTABLE" > "$STRINGS_FILE"
-          grep -Fq 'TRANZIT GFXWORLD DECODE' "$STRINGS_FILE"
-          if grep -Fq 'Full-map geometry was not selected yet' "$STRINGS_FILE"; then exit 1; fi
+          grep -Fq 'CI QUAKE RUNTIME' "$STRINGS_FILE"
+          grep -Fq 'HIJACKED' "$STRINGS_FILE"
+          nm "$EXECUTABLE" | grep -Eq '_?zq3_init'
+          nm "$EXECUTABLE" | grep -Eq '_?zq3_load_world'
 
       - name: Audit built app for non-redistributable content
         shell: bash
@@ -220,5 +220,5 @@ jobs:
           if gh release view latest-build >/dev/null 2>&1; then
             gh release upload latest-build ZombiesIOS-unsigned.ipa --clobber
           else
-            gh release create latest-build ZombiesIOS-unsigned.ipa --target "$GITHUB_SHA" --title "Latest ZombiesIOS IPA" --notes "Unsigned iOS build that passed automated iPhone 17 Simulator gameplay rendering validation. Sign before installing on iPhone."
+            gh release create latest-build ZombiesIOS-unsigned.ipa --target "$GITHUB_SHA" --title "Latest ZombiesIOS IPA" --notes "Unsigned native iOS build with Quake III-derived runtime. User-owned BO2 assets are loaded separately and are not bundled. Sign before installing on iPhone."
           fi
