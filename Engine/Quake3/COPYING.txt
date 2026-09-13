@@ -1,0 +1,12 @@
+GNU GENERAL PUBLIC LICENSE
+Version 2, June 1991
+
+Copyright (C) 1989, 1991 Free Software Foundation, Inc.
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+
+This Quake III-derived runtime is distributed under the GNU General Public License version 2 or (where the source notice permits) any later version.
+
+The authoritative verbatim GPLv2 license shipped with the upstream id Software Quake III Arena source release is:
+https://github.com/id-Software/Quake-III-Arena/blob/master/COPYING.txt
+
+The public Zombies-IOS repository is the corresponding source distribution for this modified runtime. Recipients may copy, modify, and redistribute the covered source under the GPLv2 terms, with no warranty. The original id Software copyright/license notices are retained in derived source files and attribution documentation.
