@@ -28,6 +28,13 @@ jobs:
           python3 -m unittest Tools.tests.test_t6_gfxsurface_layout -v
           python3 -m unittest Tools.tests.test_content_audit -v
 
+      - name: Test native Quake runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          clang -std=c11 -Wall -Wextra -Werror Engine/Quake3/zq3_runtime.c Engine/Quake3/tests/zq3_runtime_smoke.c -lm -o /tmp/zq3-runtime-smoke
+          /tmp/zq3-runtime-smoke
+
       - name: Prepare CI visual test environment
         run: |
           python3 -m venv .venv
