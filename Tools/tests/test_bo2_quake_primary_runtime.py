@@ -17,6 +17,16 @@ class BO2QuakePrimaryRuntimeTests(unittest.TestCase):
         self.assertIn("let entities: [BO2RuntimeEntity]", text)
         self.assertIn("RuntimeCachePolicy.expressiveDirectory()", writer.read_text())
 
+    def test_full_world_geometry_uses_32_bit_runtime_indices(self):
+        mesh = (ROOT / "Sources/ZombiesIOS/Services/T6MeshPreviewExtractor.swift").read_text()
+        extractor = (ROOT / "Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift").read_text()
+        self.assertIn("let indices: [UInt32]", mesh)
+        self.assertNotIn("maxOutputVertices = 65_000", extractor)
+        self.assertIn("indices: inout [UInt32]", extractor)
+        self.assertIn("UInt32(baseOut + mapped[0])", extractor)
+        self.assertIn("UInt32(baseOut + mapped[1])", extractor)
+        self.assertIn("UInt32(baseOut + mapped[2])", extractor)
+
     def test_quake_c_runtime_and_metal_host_exist(self):
         header = ROOT / "Engine/Quake3/zq3_runtime.h"
         source = ROOT / "Engine/Quake3/zq3_runtime.c"
