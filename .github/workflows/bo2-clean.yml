@@ -11,11 +11,17 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: bo2-clean-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: macos-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Clean project boundary tests
-        run: python3 -m unittest Clean.BO2Quake.Tools.tests.test_clean_project_boundary -v
+      - name: Clean rebuild test suite
+        run: python3 -m unittest discover -s Clean/BO2Quake/Tools/tests -v
+      - name: Public content audit
+        run: python3 Clean/BO2Quake/Tools/content_audit.py Clean/BO2Quake
