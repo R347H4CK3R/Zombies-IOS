@@ -7,17 +7,23 @@ BLOCKED_MARKERS = (b'TAff0100', b'IPAK')
 TEXT_SOURCE_SUFFIXES = {
     '.py', '.swift', '.c', '.h', '.m', '.mm', '.metal', '.md', '.txt', '.json', '.yml', '.yaml', '.plist'
 }
+GENERATED_NAMES = {'__pycache__'}
+GENERATED_SUFFIXES = {'.pyc', '.pyo'}
 
 
 def scan(root: Path) -> list[str]:
     failures: list[str] = []
     for path in root.rglob('*'):
+        if any(part in GENERATED_NAMES for part in path.parts):
+            continue
         if path.is_dir() and path.name in BLOCKED_NAMES:
             failures.append(f'blocked directory: {path}')
             continue
         if not path.is_file():
             continue
         suffix = path.suffix.lower()
+        if suffix in GENERATED_SUFFIXES:
+            continue
         if suffix in BLOCKED_SUFFIXES:
             failures.append(f'blocked retail extension: {path}')
             continue
