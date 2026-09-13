@@ -8,7 +8,10 @@ REQUIRED_FAMILIES = (
     'worlds', 'materials', 'textures', 'models', 'animations', 'audio',
     'weapons', 'entities', 'scripts', 'gamemodes', 'ui',
 )
-RETAIL_EXTENSIONS = {'.ff', '.ipak', '.sabs', '.sabl', '.self', '.bin'}
+# .bin is intentionally allowed: native GameData geometry, skinning and other
+# deterministic runtime payloads use binary files.  The completion gate blocks
+# known retail BO2 container/executable types instead of banning binary data.
+RETAIL_EXTENSIONS = {'.ff', '.ipak', '.sabs', '.sabl', '.self'}
 
 
 @dataclass(frozen=True)
