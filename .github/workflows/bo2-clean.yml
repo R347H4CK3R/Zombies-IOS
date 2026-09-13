@@ -18,10 +18,18 @@ concurrency:
 jobs:
   test:
     runs-on: macos-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - name: Clean rebuild test suite
         run: python3 -m unittest discover -s Clean/BO2Quake/Tools/tests -v
       - name: Public content audit
         run: python3 Clean/BO2Quake/Tools/content_audit.py Clean/BO2Quake
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate clean Xcode project
+        working-directory: Clean/BO2Quake
+        run: xcodegen generate
+      - name: Build clean iPhone Simulator app
+        working-directory: Clean/BO2Quake
+        run: xcodebuild -project BO2Quake.xcodeproj -scheme BO2Quake -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build/SimulatorDerivedData CODE_SIGNING_ALLOWED=NO build
