@@ -1,10 +1,50 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from pathlib import Path
+import struct
+
 MAX_LZO_BLOCK_OUTPUT = 0x1000000
 
 
 class LZOError(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class IPAKSegment:
+    type: int
+    offset: int
+    size: int
+    entry_count: int
+
+
+@dataclass(frozen=True)
+class IPAKEntry:
+    index: int
+    key: int
+    offset: int
+    compressed_size: int
+
+
+@dataclass(frozen=True)
+class IPAKIndex:
+    endian: str
+    endian_name: str
+    version: int
+    declared_size: int
+    entries: tuple[IPAKEntry, ...]
+    data_segment: IPAKSegment
+
+
+@dataclass(frozen=True)
+class DecodedIPAKEntry:
+    key: int
+    data: bytes
+    raw_blocks: int
+    lzo_blocks: int
+    padding_blocks: int
+    consumed: int
 
 
 def lzo1x_decompress(data: bytes, max_output: int = MAX_LZO_BLOCK_OUTPUT) -> bytes:
@@ -157,3 +197,181 @@ def lzo1x_decompress(data: bytes, max_output: int = MAX_LZO_BLOCK_OUTPUT) -> byt
             state = 'match'
         else:
             state = 'main'
+
+
+def _parse_header(path: Path) -> tuple[str, str, int, int, tuple[IPAKSegment, ...]]:
+    size = path.stat().st_size
+    with path.open('rb') as handle:
+        head = handle.read(min(4096, size))
+    if len(head) < 48 or head[:4] != b'IPAK':
+        raise ValueError('not an IPAK file or header too small')
+
+    candidates: list[tuple[int, str, str, int, int, tuple[IPAKSegment, ...]]] = []
+    for endian, endian_name in (('>', 'big'), ('<', 'little')):
+        try:
+            _, version, declared_size, segment_count = struct.unpack_from(endian + '4I', head, 0)
+        except struct.error:
+            continue
+        if not (1 <= segment_count <= 32) or 16 + segment_count * 16 > len(head):
+            continue
+        score = 0
+        segments: list[IPAKSegment] = []
+        plausible_types: set[int] = set()
+        for index in range(segment_count):
+            offset = 16 + index * 16
+            segment_type, segment_offset, segment_size, entry_count = struct.unpack_from(endian + '4I', head, offset)
+            plausible = (
+                segment_type in range(0, 9)
+                and 0 <= segment_offset <= size
+                and 0 <= segment_size <= size
+                and segment_offset + segment_size <= size
+                and 0 <= entry_count < 10_000_000
+            )
+            if plausible:
+                score += 3
+                plausible_types.add(segment_type)
+                segments.append(IPAKSegment(segment_type, segment_offset, segment_size, entry_count))
+        if 1 in plausible_types:
+            score += 5
+        if 2 in plausible_types:
+            score += 5
+        if version < 0x1000000:
+            score += 1
+        if declared_size == size:
+            score += 2
+        candidates.append((score, endian, endian_name, version, declared_size, tuple(segments)))
+
+    if not candidates:
+        raise ValueError('no plausible IPAK byte order/layout')
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    score, endian, endian_name, version, declared_size, segments = candidates[0]
+    if score < 10:
+        raise ValueError('IPAK layout confidence too low')
+    return endian, endian_name, version, declared_size, segments
+
+
+def _parse_block_header(raw: bytes, endian: str) -> tuple[int, int, tuple[int, ...]]:
+    if len(raw) < 128:
+        raise EOFError('short IPAK block header')
+    first = struct.unpack_from(endian + 'I', raw, 0)[0]
+    if endian == '<':
+        count = (first >> 24) & 0xFF
+        packed_offset = first & 0xFFFFFF
+    else:
+        count_a = (first >> 24) & 0xFF
+        count_b = first & 0xFF
+        if 0 < count_a <= 31:
+            count = count_a
+            packed_offset = first & 0xFFFFFF
+        else:
+            count = count_b
+            packed_offset = (first >> 8) & 0xFFFFFF
+    commands = struct.unpack_from(endian + '31I', raw, 4)
+    return packed_offset, count, commands
+
+
+class IPAKArchive:
+    def __init__(self, path: Path):
+        self.path = Path(path)
+        self._index: IPAKIndex | None = None
+
+    def index(self) -> IPAKIndex:
+        if self._index is not None:
+            return self._index
+        endian, endian_name, version, declared_size, segments = _parse_header(self.path)
+        entries_segment = next((segment for segment in segments if segment.type == 1), None)
+        data_segment = next((segment for segment in segments if segment.type == 2), None)
+        if entries_segment is None or data_segment is None:
+            raise ValueError('IPAK missing entry or data segment')
+        if entries_segment.entry_count * 16 > entries_segment.size:
+            raise ValueError('IPAK entry count exceeds entry segment size')
+
+        entries: list[IPAKEntry] = []
+        file_size = self.path.stat().st_size
+        with self.path.open('rb') as handle:
+            handle.seek(entries_segment.offset)
+            for index in range(entries_segment.entry_count):
+                raw = handle.read(16)
+                if len(raw) != 16:
+                    raise EOFError('truncated IPAK entry table')
+                key, offset, compressed_size = struct.unpack(endian + 'QII', raw)
+                absolute_start = data_segment.offset + offset
+                if absolute_start < data_segment.offset or absolute_start >= file_size:
+                    raise ValueError(f'IPAK entry {index} starts outside data segment/file')
+                if compressed_size <= 0 or absolute_start + compressed_size > file_size:
+                    raise ValueError(f'IPAK entry {index} encoded span exceeds file')
+                entries.append(IPAKEntry(index, key, offset, compressed_size))
+
+        self._index = IPAKIndex(endian, endian_name, version, declared_size, tuple(entries), data_segment)
+        return self._index
+
+    def decode_entry(self, key: int | str) -> DecodedIPAKEntry:
+        index = self.index()
+        normalized = int(key, 16) if isinstance(key, str) else int(key)
+        entry = next((item for item in index.entries if item.key == normalized), None)
+        if entry is None:
+            raise KeyError(f'IPAK key not found: {normalized:016x}')
+
+        start = index.data_segment.offset + entry.offset
+        target = entry.compressed_size
+        file_size = self.path.stat().st_size
+        consumed = 0
+        output = bytearray()
+        raw_blocks = 0
+        lzo_blocks = 0
+        padding_blocks = 0
+
+        with self.path.open('rb') as source:
+            source.seek(start)
+            while consumed < target:
+                header_position = source.tell()
+                header = source.read(128)
+                if len(header) != 128:
+                    raise EOFError(f'truncated block header at 0x{header_position:X}')
+                _, count, commands = _parse_block_header(header, index.endian)
+                if not 1 <= count <= 31:
+                    raise ValueError(f'invalid IPAK command count {count}')
+                consumed += 128
+
+                for command_index in range(count):
+                    command = commands[command_index]
+                    block_size = command & 0xFFFFFF
+                    flag = (command >> 24) & 0xFF
+                    if block_size == 0:
+                        continue
+                    position = source.tell()
+                    if position + block_size > file_size:
+                        raise EOFError('IPAK data block extends beyond file')
+                    block = source.read(block_size)
+                    if len(block) != block_size:
+                        raise EOFError('short IPAK data block')
+
+                    if flag == 0:
+                        output.extend(block)
+                        raw_blocks += 1
+                    elif flag == 1:
+                        output.extend(lzo1x_decompress(block))
+                        lzo_blocks += 1
+                    else:
+                        padding_blocks += 1
+
+                    padding = 0
+                    if command_index + 1 == count:
+                        aligned = (source.tell() + 0x7F) & ~0x7F
+                        padding = aligned - source.tell()
+                        if padding:
+                            source.seek(padding, 1)
+                    consumed += block_size + padding
+                    if consumed >= target:
+                        break
+
+        if consumed < target:
+            raise EOFError('IPAK entry ended before encoded span was consumed')
+        return DecodedIPAKEntry(
+            key=entry.key,
+            data=bytes(output),
+            raw_blocks=raw_blocks,
+            lzo_blocks=lzo_blocks,
+            padding_blocks=padding_blocks,
+            consumed=consumed,
+        )
