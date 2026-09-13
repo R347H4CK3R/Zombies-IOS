@@ -4,8 +4,8 @@ import simd
 enum CIRuntimeMeshFixture {
     static func make() -> T6RuntimeMesh {
         let vertices: [SIMD3<Float>] = [
-            SIMD3(-8, 0, -8), SIMD3(8, 0, -8), SIMD3(8, 0, 8), SIMD3(-8, 0, 8),
-            SIMD3(-4, 6, -4), SIMD3(4, 6, -4), SIMD3(4, 6, 4), SIMD3(-4, 6, 4)
+            SIMD3(-256, 0, -256), SIMD3(256, 0, -256), SIMD3(256, 0, 256), SIMD3(-256, 0, 256),
+            SIMD3(-256, 128, -256), SIMD3(256, 128, -256), SIMD3(256, 128, 256), SIMD3(-256, 128, 256)
         ]
         let indices: [UInt16] = [
             0,2,1, 0,3,2,
@@ -22,7 +22,7 @@ enum CIRuntimeMeshFixture {
             vertexOffset: 0,
             positionOffset: 0,
             indexOffset: 0,
-            byteOrder: "CI-FIXTURE"
+            byteOrder: "CI-FIXTURE-BO2-SCALE"
         )
     }
 
@@ -32,7 +32,7 @@ enum CIRuntimeMeshFixture {
             sourceName: "CI-FIXTURE",
             vertices: mesh.vertices.map { BO2RuntimeVertex(x: $0.x, y: $0.y, z: $0.z) },
             indices: mesh.indices.map(UInt32.init),
-            spawns: [BO2RuntimeSpawn(origin: BO2RuntimeVertex(x: 0, y: 2, z: 0), yaw: 0, classname: "mp_dm_spawn")],
+            spawns: [BO2RuntimeSpawn(origin: BO2RuntimeVertex(x: 0, y: 64, z: 0), yaw: 0, classname: "mp_dm_spawn")],
             entities: [BO2RuntimeEntity(classname: "worldspawn", properties: ["classname": "worldspawn"])]
         )
     }
