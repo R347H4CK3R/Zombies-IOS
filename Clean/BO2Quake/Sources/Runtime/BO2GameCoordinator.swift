@@ -9,7 +9,9 @@ final class BO2GameCoordinator: ObservableObject {
     let animationPlayer = AnimationPlayer()
     let weapon: WeaponCombatRuntime
     let entities = EntityScriptRuntime()
+    private let raycaster: WorldTriangleRaycaster
     private(set) var gameMode: GameModeRuntime
+    private var fireHeld = false
 
     @Published private(set) var objectiveMessages: [String] = []
     @Published private(set) var lastCombatHits: [CombatHit] = []
@@ -22,17 +24,25 @@ final class BO2GameCoordinator: ObservableObject {
         self.movement = try QuakeRuntimeController(asset: world)
         self.audio = BO2AudioEngine()
         self.weapon = WeaponCombatRuntime(definition: weaponDefinition)
+        self.raycaster = WorldTriangleRaycaster(asset: world)
         self.gameMode = gameMode
+        self.weapon.raycaster = self.raycaster
     }
 
     func setGameMode(_ mode: GameModeRuntime) {
         gameMode = mode
     }
 
+    func setFireHeld(_ held: Bool) {
+        fireHeld = held
+        if held { fire(direction: aimDirection) }
+    }
+
     func step(seconds: Float) {
         movement.step(seconds: seconds)
         weapon.step(seconds)
         animationPlayer.step(seconds)
+        if fireHeld { fire(direction: aimDirection) }
         entities.updateTriggerOccupancy(position: movement.playerPosition)
         entities.step(seconds)
         let events = entities.drainEvents()
@@ -52,13 +62,19 @@ final class BO2GameCoordinator: ObservableObject {
         }
     }
 
+    var aimDirection: SIMD3<Float> {
+        let yaw = movement.yaw * .pi / 180
+        let pitch = movement.pitch * .pi / 180
+        let cp = cos(pitch)
+        return simd_normalize(SIMD3<Float>(sin(yaw) * cp, sin(pitch), -cos(yaw) * cp))
+    }
+
     func fire(direction: SIMD3<Float>) {
         lastCombatHits = weapon.fire(origin: movement.playerPosition, direction: direction)
     }
 
     func beginReload() {
         weapon.beginReload()
-        movement.requestReload()
     }
 
     func triggerUse(_ id: String) {
