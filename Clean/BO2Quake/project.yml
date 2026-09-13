@@ -1,0 +1,33 @@
+name: BO2Quake
+options:
+  bundleIdPrefix: com.r347h4ck3r
+settings:
+  base:
+    IPHONEOS_DEPLOYMENT_TARGET: '17.0'
+targets:
+  BO2Quake:
+    type: application
+    platform: iOS
+    deploymentTarget: '17.0'
+    sources:
+      - path: Sources
+      - path: Engine/Quake3
+    dependencies:
+      - sdk: Metal.framework
+      - sdk: MetalKit.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.r347h4ck3r.bo2quake
+        PRODUCT_NAME: BO2Quake
+        SWIFT_VERSION: '5.0'
+        CODE_SIGN_STYLE: Automatic
+    info:
+      path: Sources/App/Info.plist
+      properties:
+        CFBundleDisplayName: BO2 Quake
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
