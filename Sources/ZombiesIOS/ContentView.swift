@@ -8,6 +8,7 @@ struct ContentView: View {
     @State private var report: ScanReport?
     @State private var runtimeIndex: TranzitRuntimeIndex?
     @State private var runtimeSession: TranzitRuntimeSession?
+    @State private var mapSession: BO2MapRuntimeSession?
     @State private var errorMessage: String?
     @State private var showingFolderPicker = false
     @State private var showingFilePicker = false
@@ -22,6 +23,7 @@ struct ContentView: View {
 
     private let directFolderImporter = DirectFolderImporter()
     private let runtimeLoader = TranzitRuntimeLoader()
+    private let mapLoader = BO2MapRuntimeLoader()
     private let bookmarkKey = "BO2GameFolderBookmark"
 
     var body: some View {
@@ -36,12 +38,12 @@ struct ContentView: View {
                         Label(rememberedFolderName == nil ? "Choose BO2 Game Folder" : "Use Remembered Game Folder", systemImage: "folder.fill")
                     }.disabled(scanning)
                     Button { showingFilePicker = true } label: { Label("Choose BO2 File Instead", systemImage: "doc.fill") }.disabled(scanning)
-                    Text("The selected BO2 folder stays where it is. ZombiesIOS stores only the bookmark and small scan metadata; it does not copy the game folder into the app container. You can also share/open a BO2 file from Files into ZombiesIOS and the app will use that file's containing folder.")
+                    Text("The selected BO2 folder stays where it is. ZombiesIOS stores only the bookmark and runtime cache; it does not copy the game folder into the app container. Hijacked conversion is generated locally from your own BO2 files.")
                         .font(.caption).foregroundStyle(.secondary)
                     if rememberedFolderName != nil { Button("Change Remembered Folder") { showingFolderPicker = true }.disabled(scanning) }
                 }
 
-                if scanning { Section { ProgressView("Reading BO2 runtime files in place…") } }
+                if scanning { Section { ProgressView("Reading and converting BO2 runtime files in place…") } }
 
                 if let report {
                     Section("Import Inventory") {
@@ -50,8 +52,27 @@ struct ContentView: View {
                     }
                 }
 
+                if let mapSession {
+                    Section("Hijacked Native Runtime") {
+                        LabeledContent("Engine", value: "Quake III-derived / Metal")
+                        LabeledContent("Vertices", value: "\(mapSession.package.vertices.count)")
+                        LabeledContent("Triangles", value: "\(mapSession.package.triangleCount)")
+                        LabeledContent("Entities", value: "\(mapSession.package.entities.count)")
+                        LabeledContent("Spawns", value: "\(mapSession.package.spawns.count)")
+                        NavigationLink("Play Hijacked") {
+                            HijackedTouchGameplayView(session: mapSession)
+                        }
+                        .disabled(!activeScopedAccess)
+                    }
+                } else if let report, BO2MapTarget.hijacked.isComplete(in: report) {
+                    Section("Hijacked Native Runtime") {
+                        Text("Hijacked source files were found, but native conversion did not complete.")
+                            .foregroundStyle(.orange)
+                    }
+                }
+
                 if let runtimeIndex {
-                    Section("Tranzit Runtime") {
+                    Section("Legacy Tranzit Diagnostic") {
                         LabeledContent("Areas available", value: "\(runtimeIndex.availableAreas.count)")
                         LabeledContent("Containers", value: "\(runtimeIndex.containerFiles.count)")
                         LabeledContent("Audio banks", value: "\(runtimeIndex.audioBanks.count)")
@@ -60,10 +81,7 @@ struct ContentView: View {
                             LabeledContent("Target payload", value: ByteCountFormatter.string(fromByteCount: file.size, countStyle: .file))
                         }
                         if let runtimeSession, let loadedArea = runtimeSession.areas.first {
-                            LabeledContent("Loaded areas", value: "\(runtimeSession.areas.count)")
-                            LabeledContent("Validated bytes", value: ByteCountFormatter.string(fromByteCount: runtimeSession.totalLoadedBytes, countStyle: .file))
-                            LabeledContent("Folder stream", value: activeScopedAccess ? "Active" : "Unavailable")
-                            NavigationLink("Open Touch Runtime") {
+                            NavigationLink("Open Legacy Diagnostic") {
                                 TranzitTouchGameplayView(
                                     loadedArea: loadedArea,
                                     rootURL: runtimeSession.rootURL,
@@ -96,7 +114,7 @@ struct ContentView: View {
                 switch result {
                 case .success(let urls):
                     guard let fileURL = urls.first else {
-                        showImportDialog(kind: .failure, title: "No File Selected", message: "Choose a BO2 file such as EBOOT.BIN or common_zm.ff.")
+                        showImportDialog(kind: .failure, title: "No File Selected", message: "Choose a BO2 file such as mp_hijacked.ff or common_zm.ff.")
                         return
                     }
                     handleIncomingURL(fileURL)
@@ -105,9 +123,7 @@ struct ContentView: View {
                     showImportDialog(kind: .failure, title: "File Selection Failed", message: error.localizedDescription)
                 }
             }
-            .onOpenURL { url in
-                handleIncomingURL(url)
-            }
+            .onOpenURL { url in handleIncomingURL(url) }
             .alert(importDialogTitle, isPresented: $showingImportDialog) { Button("OK", role: .cancel) { } } message: { Text(importDialogMessage) }
             .task { restoreRememberedFolderName() }
         }
@@ -198,21 +214,19 @@ struct ContentView: View {
     }
 
     private func releaseActiveFolderAccess() {
-        if activeScopedAccess, let activeScopedURL {
-            activeScopedURL.stopAccessingSecurityScopedResource()
-        }
+        if activeScopedAccess, let activeScopedURL { activeScopedURL.stopAccessingSecurityScopedResource() }
         activeScopedURL = nil
         activeScopedAccess = false
     }
 
     private func beginFolderImport(_ folderURL: URL) {
         releaseActiveFolderAccess()
-
         scanning = true
         errorMessage = nil
         report = nil
         runtimeIndex = nil
         runtimeSession = nil
+        mapSession = nil
         statusMessage = "Reading BO2 runtime files directly from the selected folder…"
         showImportDialog(kind: .loading, title: "Loading BO2 Files", message: "Reading \(folderURL.lastPathComponent) in place. The game folder will not be copied into ZombiesIOS app storage.")
 
@@ -226,23 +240,53 @@ struct ContentView: View {
                 let result = try await directFolderImporter.importFolder(folderURL)
                 guard let sourceRoot = result.importedAssetsURL else { throw DirectFolderImporter.ImportError.cannotAccessFolder }
                 let index = TranzitRuntimeIndex(report: result.report)
-                let session = try await runtimeLoader.loadCurrent(report: result.report, rootURL: sourceRoot)
+
+                var legacySession: TranzitRuntimeSession?
+                if index.canEnterRuntime {
+                    legacySession = try? await runtimeLoader.loadCurrent(report: result.report, rootURL: sourceRoot)
+                }
+
+                var hijackedSession: BO2MapRuntimeSession?
+                var hijackedFailure: Error?
+                if BO2MapTarget.hijacked.isComplete(in: result.report) {
+                    do {
+                        hijackedSession = try await mapLoader.load(target: .hijacked, report: result.report, rootURL: sourceRoot)
+                    } catch {
+                        hijackedFailure = error
+                    }
+                }
+
+                guard legacySession != nil || hijackedSession != nil else {
+                    if let hijackedFailure { throw hijackedFailure }
+                    throw DirectFolderImporter.ImportError.noManifestMatches
+                }
+
                 await MainActor.run {
                     report = result.report
                     runtimeIndex = index
-                    runtimeSession = session
+                    runtimeSession = legacySession
+                    mapSession = hijackedSession
                     scanning = false
-                    let target = index.firstPlayableArea?.displayName ?? "none"
-                    statusMessage = "Tranzit runtime is attached to the remembered folder. First playable target: \(target)."
-                    showImportDialog(kind: .success, title: "BO2 Load Complete", message: "Found \(result.report.totalFiles) BO2 files and attached the smallest Tranzit area directly to the selected folder. Folder access remains active for runtime streaming. No game files were copied into app storage. First playable target: \(target).")
+                    if let hijackedSession {
+                        statusMessage = "Hijacked converted locally and is ready in the native Quake III-derived runtime."
+                        showImportDialog(
+                            kind: .success,
+                            title: "Hijacked Ready",
+                            message: "Decoded \(hijackedSession.fastFile.fileName) into \(hijackedSession.package.triangleCount) runtime triangles with \(hijackedSession.package.entities.count) entities. Original BO2 files remain in place."
+                        )
+                    } else {
+                        let target = index.firstPlayableArea?.displayName ?? "legacy runtime"
+                        statusMessage = "BO2 runtime is attached to the remembered folder. Available target: \(target)."
+                        showImportDialog(kind: .success, title: "BO2 Load Complete", message: "Loaded BO2 runtime resources in place without copying the source folder.")
+                    }
                 }
             } catch {
                 await MainActor.run {
                     releaseActiveFolderAccess()
                     scanning = false
                     errorMessage = "BO2 load failed: \(error.localizedDescription)"
-                    statusMessage = "Folder access failed. Choose PS3_GAME, USRDIR, english, or use Choose BO2 File Instead."
-                    showImportDialog(kind: .failure, title: "BO2 Load Failed", message: "\(error.localizedDescription)\n\nTry selecting PS3_GAME, USRDIR, english, or choose a BO2 file instead.")
+                    statusMessage = "Folder access or BO2 conversion failed."
+                    showImportDialog(kind: .failure, title: "BO2 Load Failed", message: error.localizedDescription)
                 }
             }
         }
