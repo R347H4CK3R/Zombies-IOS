@@ -22,6 +22,9 @@ targets:
         PRODUCT_NAME: BO2Quake
         SWIFT_VERSION: '5.0'
         CODE_SIGN_STYLE: Automatic
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/Support/BO2Quake-Bridging-Header.h
+        HEADER_SEARCH_PATHS:
+          - $(SRCROOT)/Engine/Quake3
     info:
       path: Sources/App/Info.plist
       properties:
