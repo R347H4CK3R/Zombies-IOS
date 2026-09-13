@@ -38,7 +38,7 @@ enum CIRuntimeMeshFixture {
             indices: indices,
             surfaces: [BO2RuntimeSurface(firstIndex: 0, indexCount: UInt32(indices.count), materialID: 0)],
             entities: [BO2RuntimeEntity(properties: ["classname": "worldspawn"])],
-            spawns: [BO2RuntimeSpawn(classname: "info_player_start", origin: BO2RuntimeVertex(SIMD3<Float>(0, 2, 12)), yawDegrees: 180)],
+            spawns: [BO2RuntimeSpawn(classname: "info_player_start", origin: BO2RuntimeVertex(SIMD3<Float>(0, 2, 7)), yawDegrees: 180)],
             bounds: bounds
         )
     }
