@@ -18,9 +18,11 @@ targets:
     platform: iOS
     sources:
       - Sources/ZombiesIOS
+      - Engine/Quake3
     dependencies:
       - package: ZIPFoundation
       - sdk: libz.tbd
+      - sdk: MetalKit.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.r347h4ck3r.zombiesios
@@ -30,3 +32,4 @@ targets:
         INFOPLIST_FILE: Sources/ZombiesIOS/Info.plist
         SUPPORTS_MACCATALYST: NO
         SWIFT_OBJC_BRIDGING_HEADER: Sources/ZombiesIOS/Support/T6InflateBridge.h
+        HEADER_SEARCH_PATHS: "$(SRCROOT)/Engine/Quake3"
