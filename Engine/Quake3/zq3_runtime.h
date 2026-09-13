@@ -16,6 +16,9 @@ typedef struct {
     int reloading;
     float reload_remaining;
     float shot_cooldown;
+    int last_shot_hit;
+    float last_hit_distance;
+    zq3_vec3 last_hit_position;
 } zq3_weapon_state;
 
 int zq3_init(void);
