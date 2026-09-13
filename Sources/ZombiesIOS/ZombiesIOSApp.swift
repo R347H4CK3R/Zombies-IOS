@@ -7,7 +7,7 @@ struct ZombiesIOSApp: App {
             if CIValidationMode.isEnabled {
                 CIGameplayValidationEntryView()
             } else {
-                ContentView()
+                BO2QuakeRootView()
             }
         }
     }
