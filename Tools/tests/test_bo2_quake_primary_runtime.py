@@ -57,9 +57,9 @@ class BO2QuakePrimaryRuntimeTests(unittest.TestCase):
         parser = ROOT / "Sources/ZombiesIOS/Services/BO2RuntimePackage/BO2EntityParser.swift"
         self.assertTrue(parser.exists())
         text = parser.read_text()
-        self.assertIn('"worldspawn"', text)
-        self.assertIn('"mp_dm_spawn"', text)
-        self.assertIn('"mp_tdm_spawn"', text)
+        self.assertIn("worldspawn", text)
+        self.assertIn("mp_dm_spawn", text)
+        self.assertIn("mp_tdm_spawn", text)
         self.assertIn("BO2RuntimeSpawn", text)
         self.assertIn("convertOrigin", text)
 
