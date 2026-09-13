@@ -25,4 +25,15 @@ enum CIRuntimeMeshFixture {
             byteOrder: "CI-FIXTURE"
         )
     }
+
+    static func makePackage() -> BO2RuntimePackage {
+        let mesh = make()
+        return BO2RuntimePackage(
+            sourceName: "CI-FIXTURE",
+            vertices: mesh.vertices.map { BO2RuntimeVertex(x: $0.x, y: $0.y, z: $0.z) },
+            indices: mesh.indices.map(UInt32.init),
+            spawns: [BO2RuntimeSpawn(origin: BO2RuntimeVertex(x: 0, y: 2, z: 0), yaw: 0, classname: "mp_dm_spawn")],
+            entities: [BO2RuntimeEntity(classname: "worldspawn", properties: ["classname": "worldspawn"])]
+        )
+    }
 }
