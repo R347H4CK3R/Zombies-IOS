@@ -4,7 +4,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 TARGET = ROOT / "Sources/ZombiesIOS/Models/BO2MapTarget.swift"
 LOADER = ROOT / "Sources/ZombiesIOS/Services/BO2MapRuntimeLoader.swift"
-SCANNER = ROOT / "Sources/ZombiesIOS/Services/PS3DumpScanner.swift"
+MANIFEST = ROOT / "Sources/ZombiesIOS/Models/BO2ZombiesManifest.swift"
 
 
 class HijackedRuntimeContractTests(unittest.TestCase):
@@ -13,10 +13,11 @@ class HijackedRuntimeContractTests(unittest.TestCase):
         for name in ("mp_hijacked.ff", "mp_hijacked.ipak", "mpl_hijacked.all.sabs"):
             self.assertIn(name, text)
 
-    def test_scanner_accepts_map_targets_without_relaxing_manifest_filter(self):
-        text = SCANNER.read_text(encoding="utf-8")
-        self.assertIn("BO2MapTarget.recognizes(relative)", text)
-        self.assertIn("BO2ZombiesManifest.contains(relative)", text)
+    def test_existing_scanner_manifest_admits_hijacked_without_broad_filtering(self):
+        text = MANIFEST.read_text(encoding="utf-8")
+        for name in ("mp_hijacked.ff", "mp_hijacked.ipak", "mpl_hijacked.all.sabs"):
+            self.assertIn(name, text)
+        self.assertIn("normalizedPaths.contains", text)
 
     def test_loader_uses_real_t6_decode_and_gfxworld_extractor(self):
         text = LOADER.read_text(encoding="utf-8")
