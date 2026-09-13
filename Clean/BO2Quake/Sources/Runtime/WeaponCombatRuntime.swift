@@ -10,8 +10,15 @@ struct WeaponDefinition: Codable {
     let reloadEmptyTimeMs: Int
     let damage: Float
     let minDamage: Float
-    let range: Float
+    let maxDamageRange: Float
+    let minDamageRange: Float
     let shotCount: Int
+    let fireType: String
+    let adsTransInMs: Int
+    let adsTransOutMs: Int
+    let adsZoomFov: Float?
+
+    var range: Float { minDamageRange }
 }
 
 struct CombatHit {
@@ -62,7 +69,7 @@ final class WeaponCombatRuntime {
         let dir = simd_length_squared(direction) > 0 ? simd_normalize(direction) : SIMD3<Float>(0, 0, -1)
         var hits: [CombatHit] = []
         for _ in 0..<max(1, definition.shotCount) {
-            if let hit = raycaster?.raycast(origin: origin, direction: dir, range: definition.range) {
+            if let hit = raycaster?.raycast(origin: origin, direction: dir, range: definition.minDamageRange) {
                 hits.append(hit)
             }
         }
@@ -91,8 +98,10 @@ final class WeaponCombatRuntime {
     }
 
     func damage(for distance: Float) -> Float {
-        guard definition.range > 0 else { return definition.damage }
-        let t = max(0, min(1, distance / definition.range))
+        if distance <= definition.maxDamageRange { return definition.damage }
+        if distance >= definition.minDamageRange { return definition.minDamage }
+        let span = max(0.0001, definition.minDamageRange - definition.maxDamageRange)
+        let t = max(0, min(1, (distance - definition.maxDamageRange) / span))
         return definition.damage + (definition.minDamage - definition.damage) * t
     }
 
