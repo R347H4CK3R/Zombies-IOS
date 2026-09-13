@@ -142,10 +142,16 @@ struct QuakeMetalWorldView: UIViewRepresentable {
             descriptor.depthAttachmentPixelFormat = view.depthStencilPixelFormat
             pipeline = try? device.makeRenderPipelineState(descriptor: descriptor)
 
-            var vertices = package.vertices.map { SIMD3<Float>($0.x, $0.y, $0.z) }
-            var indices = package.indices
-            vertexBuffer = device.makeBuffer(bytes: &vertices, length: MemoryLayout<SIMD3<Float>>.stride * vertices.count)
-            indexBuffer = device.makeBuffer(bytes: &indices, length: MemoryLayout<UInt32>.stride * indices.count)
+            let vertices = package.vertices.map { SIMD3<Float>($0.x, $0.y, $0.z) }
+            let indices = package.indices
+            vertexBuffer = vertices.withUnsafeBytes { raw in
+                guard let base = raw.baseAddress else { return nil }
+                return device.makeBuffer(bytes: base, length: raw.count)
+            }
+            indexBuffer = indices.withUnsafeBytes { raw in
+                guard let base = raw.baseAddress else { return nil }
+                return device.makeBuffer(bytes: base, length: raw.count)
+            }
             indexCount = indices.count
         }
 
