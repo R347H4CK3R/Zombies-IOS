@@ -82,7 +82,7 @@ enum T6GfxSurfaceMeshExtractor {
 
             guard accepted >= 3, vertices.count >= 32, indices.count >= 60 else { return nil }
             return T6RuntimeMesh(
-                vertices: normalizeForSceneKit(vertices),
+                vertices: convertForRuntime(vertices),
                 indices: indices,
                 vertexStride: packedWorldVertexStride,
                 vertexOffset: vertexBase,
@@ -418,24 +418,8 @@ enum T6GfxSurfaceMeshExtractor {
             && p.z >= s.mins.z - margin && p.z <= s.maxs.z + margin
     }
 
-    private static func normalizeForSceneKit(_ vertices: [SIMD3<Float>]) -> [SIMD3<Float>] {
-        guard !vertices.isEmpty else { return vertices }
-        let converted = vertices.map { SIMD3<Float>($0.x, $0.z, -$0.y) }
-        var minV = converted[0]
-        var maxV = converted[0]
-        for v in converted.dropFirst() {
-            minV = componentMin(minV, v)
-            maxV = componentMax(maxV, v)
-        }
-        let span = maxV - minV
-        let largest = max(Float(0.0001), max(span.x, max(span.y, span.z)))
-        let scale = 115.0 / largest
-        let centerX = (minV.x + maxV.x) * 0.5
-        let centerZ = (minV.z + maxV.z) * 0.5
-        let groundY = minV.y
-        return converted.map {
-            SIMD3<Float>(($0.x - centerX) * scale, ($0.y - groundY) * scale, ($0.z - centerZ) * scale)
-        }
+    private static func convertForRuntime(_ vertices: [SIMD3<Float>]) -> [SIMD3<Float>] {
+        vertices.map { SIMD3<Float>($0.x, $0.z, -$0.y) }
     }
 
     private static func beFloat(_ bytes: UnsafeBufferPointer<UInt8>, _ offset: Int) -> Float {
