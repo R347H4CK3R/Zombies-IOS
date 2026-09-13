@@ -64,21 +64,29 @@ class OATBackend:
 
         root = out.resolve()
         collected: dict[str, Path] = {}
-        for pattern in expected_globs:
-            matches = list(out.glob(pattern))
-            if not matches:
-                failures.append(f'expected output not produced: {pattern}')
-                continue
-            for candidate in matches:
-                if not candidate.is_file():
+
+        def collect(candidate: Path) -> None:
+            if not candidate.is_file():
+                return
+            resolved = candidate.resolve()
+            try:
+                resolved.relative_to(root)
+            except ValueError:
+                failures.append(f'output escaped destination: {candidate}')
+                return
+            collected[str(resolved)] = candidate
+
+        if expected_globs:
+            for pattern in expected_globs:
+                matches = list(out.glob(pattern))
+                if not matches:
+                    failures.append(f'expected output not produced: {pattern}')
                     continue
-                resolved = candidate.resolve()
-                try:
-                    resolved.relative_to(root)
-                except ValueError:
-                    failures.append(f'output escaped destination: {candidate}')
-                    continue
-                collected[str(resolved)] = candidate
+                for candidate in matches:
+                    collect(candidate)
+        else:
+            for candidate in out.rglob('*'):
+                collect(candidate)
 
         outputs = tuple(collected[key] for key in sorted(collected))
         return OATResult(
