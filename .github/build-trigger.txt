@@ -71,3 +71,4 @@ bo2-quake-primary-runtime 2026-09-13T14:05:00-05:00
 bo2-quake-mapents-camera-collision 2026-09-13T14:11:00-05:00
 bo2-quake-contract-fix 2026-09-13T14:15:00-05:00
 bo2-quake-walkable-floor-fix 2026-09-13T14:22:00-05:00
+bo2-quake-native-smoke 2026-09-13T14:25:00-05:00
