@@ -1,0 +1,3 @@
+BO2 Quake iOS includes or may include code derived from the id Software Quake III Arena source release under the GNU General Public License version 2.
+
+Any Quake III-derived source in this subtree must remain available under the GPLv2 terms and retain upstream attribution. The authoritative GPLv2 license text is available from the GNU Project and the upstream Quake III source release.
