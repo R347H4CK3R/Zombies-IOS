@@ -6,7 +6,7 @@ import zlib
 
 from Clean.BO2Quake.Converter.bo2convert.t6.salsa20 import T6SalsaState
 from Clean.BO2Quake.Converter.bo2convert.t6.fastfile import decode_fastfile
-from Clean.BO2Quake.Converter.bo2convert.t6.ipak import lzo1x_decompress
+from Clean.BO2Quake.Converter.bo2convert.t6.ipak import IPAKArchive, lzo1x_decompress
 
 
 class T6ContainerDecoderTests(unittest.TestCase):
@@ -44,6 +44,35 @@ class T6ContainerDecoderTests(unittest.TestCase):
             self.assertEqual(decoded.zone_bytes, zone)
             self.assertEqual(decoded.zone_name, 'mp_test')
             self.assertEqual(decoded.chunk_count, 1)
+
+    def test_indexes_and_decodes_big_endian_ipak_entry(self):
+        with TemporaryDirectory() as td:
+            path = Path(td) / 'test.ipak'
+            entry_key = 0x0123456789ABCDEF
+            entry_offset = 0
+            encoded_span = 192
+            file_size = 256
+            header = b'IPAK' + struct.pack('>III', 1, file_size, 2)
+            segments = (
+                struct.pack('>4I', 1, 48, 16, 1)
+                + struct.pack('>4I', 2, 64, 192, 0)
+            )
+            entry = struct.pack('>QII', entry_key, entry_offset, encoded_span)
+            first_word = 0x01000000
+            commands = [3] + [0] * 30
+            block_header = struct.pack('>I31I', first_word, *commands)
+            data = b'abc' + bytes(61)
+            path.write_bytes(header + segments + entry + block_header + data)
+
+            archive = IPAKArchive(path)
+            indexed = archive.index()
+            self.assertEqual(indexed.endian, '>')
+            self.assertEqual(len(indexed.entries), 1)
+            self.assertEqual(indexed.entries[0].key, entry_key)
+            decoded = archive.decode_entry(entry_key)
+            self.assertEqual(decoded.data, b'abc')
+            self.assertEqual(decoded.raw_blocks, 1)
+            self.assertEqual(decoded.lzo_blocks, 0)
 
 
 if __name__ == '__main__':
