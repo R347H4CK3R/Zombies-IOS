@@ -35,6 +35,10 @@ int main(void) {
     assert(s.origin.z > 0.1f);
     assert(nearf(s.origin.y, 1.7f, 0.05f));
 
+    for (int n = 0; n < 180; ++n) zq3_step(1.0f/60.0f);
+    s = zq3_get_player_state();
+    assert(s.origin.z < 7.8f);
+
     zq3_input jump = {0};
     jump.jump = 1;
     zq3_set_input(jump);
