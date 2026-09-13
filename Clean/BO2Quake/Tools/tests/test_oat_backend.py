@@ -1,6 +1,5 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
-import os
 import stat
 import unittest
 
@@ -41,6 +40,29 @@ class OATBackendTests(unittest.TestCase):
             result = backend.dump_zone(root / 'zone.ff', root / 'out', expected_globs=[])
             self.assertFalse(result.complete)
             self.assertEqual(result.returncode, 7)
+
+    def test_empty_expected_globs_returns_full_recursive_inventory(self):
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            body = 'mkdir -p "$2/materials" "$2/xmodel"; printf m > "$2/materials/a.json"; printf g > "$2/xmodel/b.glb"'
+            tool = self._tool(root, body)
+            backend = OATBackend(tool)
+            result = backend.dump_zone(root / 'zone.ff', root / 'out', expected_globs=[])
+            self.assertTrue(result.complete, result.failures)
+            rel = {p.relative_to(root / 'out').as_posix() for p in result.outputs}
+            self.assertEqual(rel, {'materials/a.json', 'xmodel/b.glb'})
+
+    def test_invocation_uses_real_unlinker_flags(self):
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            args_file = root / 'args.txt'
+            body = f'printf "%s\\n" "$@" > "{args_file}"; exit 0'
+            tool = self._tool(root, body)
+            backend = OATBackend(tool)
+            backend.dump_zone(root / 'zone.ff', root / 'out', expected_globs=[])
+            args = args_file.read_text().splitlines()
+            self.assertEqual(args[:6], ['-o', str(root / 'out'), '--image-format', 'dds', '--model-format', 'glb'])
+            self.assertEqual(args[-1], str(root / 'zone.ff'))
 
 
 if __name__ == '__main__':
