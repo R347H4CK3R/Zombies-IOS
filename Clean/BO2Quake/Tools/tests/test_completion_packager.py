@@ -4,15 +4,14 @@ import json
 import zipfile
 import unittest
 
-from Clean.BO2Quake.Converter.bo2convert.completion import validate_completion
+from Clean.BO2Quake.Converter.bo2convert.completion import validate_completion, REQUIRED_FAMILIES
 from Clean.BO2Quake.Converter.bo2convert.packager import package_self_contained_ipa
 
 
 class CompletionPackagerTests(unittest.TestCase):
     def _manifest(self, root: Path, complete: bool = True):
-        families = ['worlds','materials','textures','models','animations','audio','weapons','entities','scripts','gamemodes','ui']
         assets = []
-        for family in families:
+        for family in REQUIRED_FAMILIES:
             payload = root / family / 'fixture.bin'
             payload.parent.mkdir(parents=True, exist_ok=True)
             payload.write_bytes((family + '\n').encode())
