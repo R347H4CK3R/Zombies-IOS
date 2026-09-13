@@ -48,7 +48,20 @@ actor BO2MapRuntimeLoader {
         guard let mesh = T6GfxSurfaceMeshExtractor.extract(from: decoded.payloadPrefix, scanLimit: decoded.payloadPrefix.count) else {
             throw LoaderError.geometryMissing(target.fastFileName)
         }
-        let url = try writer.write(mesh: mesh, sourceName: target.rawValue)
+
+        let mapped: BO2EntityParser.Result
+        if let lump = BO2EntityParser.extractEntityLump(from: decoded.payloadPrefix) {
+            mapped = BO2EntityParser.parse(lump)
+        } else {
+            mapped = BO2EntityParser.Result(entities: [], spawns: [])
+        }
+
+        let url = try writer.write(
+            mesh: mesh,
+            entities: mapped.entities,
+            spawns: mapped.spawns,
+            sourceName: target.rawValue
+        )
         let package = try writer.read(from: url)
         return BO2MapRuntimeSession(target: target, packageURL: url, package: package)
     }
