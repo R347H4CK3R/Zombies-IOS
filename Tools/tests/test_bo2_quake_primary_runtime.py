@@ -27,7 +27,13 @@ class BO2QuakePrimaryRuntimeTests(unittest.TestCase):
         api = header.read_text()
         for symbol in ("zq3_init", "zq3_load_world", "zq3_set_input", "zq3_step", "zq3_get_player_state", "zq3_shutdown"):
             self.assertIn(symbol, api)
-        self.assertIn("MTKView", view.read_text())
+        runtime = source.read_text()
+        self.assertIn("world_floor", runtime)
+        self.assertIn("barycentric_height", runtime)
+        metal = view.read_text()
+        self.assertIn("MTKView", metal)
+        self.assertIn("playerState", metal)
+        self.assertIn("CameraUniforms", metal)
 
     def test_xcodegen_compiles_engine_and_metal(self):
         project = (ROOT / "project.yml").read_text()
@@ -44,13 +50,27 @@ class BO2QuakePrimaryRuntimeTests(unittest.TestCase):
         self.assertIn("T6PS3PayloadDecoder", text)
         self.assertIn("T6GfxSurfaceMeshExtractor", text)
         self.assertIn("BO2RuntimePackageWriter", text)
+        self.assertIn("BO2EntityParser.extractEntityLump", text)
+        self.assertIn("BO2EntityParser.parse", text)
+
+    def test_mapents_parser_maps_multiplayer_spawns(self):
+        parser = ROOT / "Sources/ZombiesIOS/Services/BO2RuntimePackage/BO2EntityParser.swift"
+        self.assertTrue(parser.exists())
+        text = parser.read_text()
+        self.assertIn('"worldspawn"', text)
+        self.assertIn('"mp_dm_spawn"', text)
+        self.assertIn('"mp_tdm_spawn"', text)
+        self.assertIn("BO2RuntimeSpawn", text)
+        self.assertIn("convertOrigin", text)
 
     def test_production_app_routes_to_quake_not_scenekit(self):
         app = (ROOT / "Sources/ZombiesIOS/ZombiesIOSApp.swift").read_text()
         content = (ROOT / "Sources/ZombiesIOS/ContentView.swift").read_text()
+        ci = (ROOT / "Sources/ZombiesIOS/Views/CIGameplayValidationEntryView.swift").read_text()
         self.assertIn("BO2QuakeRootView", app)
         self.assertIn("QuakeGameplayView", content)
         self.assertNotIn("NativeFPSSceneView(", content)
+        self.assertNotIn("SceneKit", ci)
 
 
 if __name__ == "__main__":
