@@ -45,7 +45,7 @@ struct RuntimeAssetLoader {
         guard let asset = gameData.manifest.assets.first(where: { $0.kind == "world" }) else {
             throw RuntimeAssetLoaderError.missingAssetKind("world")
         }
-        return try WorldRuntimeAsset.load(gameData: gameData, asset: asset)
+        return try WorldRuntimeAsset.load(asset: asset, from: gameData)
     }
 }
 
