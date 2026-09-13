@@ -18,9 +18,11 @@ targets:
     platform: iOS
     sources:
       - Sources/ZombiesIOS
+      - Engine/Quake3
     dependencies:
       - package: ZIPFoundation
       - sdk: libz.tbd
+      - sdk: MetalKit.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.r347h4ck3r.zombiesios
