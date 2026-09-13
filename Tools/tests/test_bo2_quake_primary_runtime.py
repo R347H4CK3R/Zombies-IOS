@@ -58,6 +58,14 @@ class BO2QuakePrimaryRuntimeTests(unittest.TestCase):
         self.assertIn("weaponState.reserve", view)
         self.assertIn("RELOADING", view)
 
+    def test_world_and_entities_share_one_bo2_runtime_coordinate_space(self):
+        extractor = (ROOT / "Sources/ZombiesIOS/Services/T6GfxSurfaceMeshExtractor.swift").read_text()
+        parser = (ROOT / "Sources/ZombiesIOS/Services/BO2RuntimePackage/BO2EntityParser.swift").read_text()
+        self.assertNotIn("normalizeForSceneKit", extractor)
+        self.assertIn("convertForRuntime", extractor)
+        self.assertIn("SIMD3<Float>($0.x, $0.z, -$0.y)", extractor)
+        self.assertIn("BO2RuntimeVertex(x: bo2.x, y: bo2.z, z: -bo2.y)", parser)
+
     def test_hijacked_is_primary_map_target(self):
         target = ROOT / "Sources/ZombiesIOS/Models/BO2MapTarget.swift"
         loader = ROOT / "Sources/ZombiesIOS/Services/BO2MapRuntimeLoader.swift"
