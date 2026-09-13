@@ -8,8 +8,9 @@ class NativeWorldRuntimeContractTests(unittest.TestCase):
     def test_runtime_loads_world_gamedata_and_draws_with_metal(self):
         world = (ROOT / 'Sources' / 'Runtime' / 'WorldRuntimeAsset.swift').read_text()
         renderer = (ROOT / 'Sources' / 'Runtime' / 'MetalWorldView.swift').read_text()
+        gameplay = (ROOT / 'Sources' / 'Runtime' / 'QuakeGameplayView.swift').read_text()
         root = (ROOT / 'Sources' / 'App' / 'RootView.swift').read_text()
-        combined = world + renderer + root
+        combined = world + renderer + gameplay + root
         self.assertIn('MTKView', renderer)
         self.assertIn('MTKViewDelegate', renderer)
         self.assertIn('UInt32', world)
@@ -17,7 +18,8 @@ class NativeWorldRuntimeContractTests(unittest.TestCase):
         self.assertIn('indices.bin', world)
         self.assertIn('surfaces.json', world)
         self.assertIn('GameDataLoader', root)
-        self.assertIn('MetalWorldView', root)
+        self.assertIn('QuakeGameplayView', root)
+        self.assertIn('MetalWorldView', gameplay)
         self.assertNotIn('SceneKit', combined)
 
 
