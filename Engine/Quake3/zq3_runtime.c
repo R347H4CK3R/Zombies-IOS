@@ -105,8 +105,7 @@ static int world_blocks_motion(zq3_vec3 origin, float dx, float dz) {
     float distance = sqrtf(dx * dx + dz * dz);
     if (distance < 0.000001f) return 0;
     zq3_vec3 dir = {dx / distance, 0.0f, dz / distance};
-    const float body_radius = 0.28f;
-    const float probes[] = {0.0f, -0.75f, -1.35f};
+    const float probes[] = {0.0f, -ZQ3_PLAYER_HEIGHT * 0.45f, -ZQ3_PLAYER_HEIGHT * 0.88f};
 
     for (size_t p = 0; p < sizeof(probes) / sizeof(probes[0]); ++p) {
         zq3_vec3 ray_origin = origin;
@@ -119,7 +118,7 @@ static int world_blocks_motion(zq3_vec3 origin, float dx, float dz) {
             const float *c = &g.vertices[(size_t)ic * 3];
             if (triangle_is_walkable(a, b, c)) continue;
             float t;
-            if (ray_triangle(ray_origin, dir, a, b, c, &t) && t <= distance + body_radius) return 1;
+            if (ray_triangle(ray_origin, dir, a, b, c, &t) && t <= distance + ZQ3_PLAYER_RADIUS) return 1;
         }
     }
     return 0;
@@ -137,7 +136,7 @@ static void world_hitscan(void) {
     float cp = cosf(pitch);
     zq3_vec3 dir = {sinf(yaw) * cp, sinf(pitch), cosf(yaw) * cp};
     zq3_vec3 origin = g.player.origin;
-    float nearest = 1000.0f;
+    float nearest = 100000.0f;
 
     for (size_t i = 0; i + 2 < g.index_count; i += 3) {
         uint32_t ia = g.indices[i], ib = g.indices[i + 1], ic = g.indices[i + 2];
@@ -200,7 +199,7 @@ int zq3_init(void) {
     free_world();
     memset(&g, 0, sizeof(g));
     g.initialized = 1;
-    g.player.origin = (zq3_vec3){0.0f, 2.0f, 0.0f};
+    g.player.origin = (zq3_vec3){0.0f, ZQ3_PLAYER_HEIGHT, 0.0f};
     reset_weapon();
     return 1;
 }
@@ -219,13 +218,11 @@ int zq3_load_world(const float *xyz, size_t vertex_count, const uint32_t *indice
     g.player.velocity = (zq3_vec3){0,0,0};
     reset_weapon();
 
-    const float player_height = 1.7f;
-    const float step_height = 0.75f;
     float floor_y;
-    float floor_query_max = spawn.y - player_height + step_height;
+    float floor_query_max = spawn.y - ZQ3_PLAYER_HEIGHT + ZQ3_STEP_HEIGHT;
     if (world_floor(spawn.x, spawn.z, floor_query_max, &floor_y)) {
-        float standing_y = floor_y + player_height;
-        if (spawn.y <= standing_y + step_height) {
+        float standing_y = floor_y + ZQ3_PLAYER_HEIGHT;
+        if (spawn.y <= standing_y + ZQ3_STEP_HEIGHT) {
             g.player.origin.y = standing_y;
             g.player.on_ground = 1;
         }
@@ -244,14 +241,14 @@ void zq3_step(float seconds) {
     float sy = sinf(radians), cy = cosf(radians);
     float wishx = g.input.forward * sy + g.input.right * cy;
     float wishz = g.input.forward * cy - g.input.right * sy;
-    const float speed = g.input.aim ? 3.5f : 6.5f;
+    const float speed = g.input.aim ? ZQ3_ADS_SPEED : ZQ3_RUN_SPEED;
     g.player.velocity.x = wishx * speed;
     g.player.velocity.z = wishz * speed;
     if (g.input.jump && g.player.on_ground) {
-        g.player.velocity.y = 5.2f;
+        g.player.velocity.y = ZQ3_JUMP_SPEED;
         g.player.on_ground = 0;
     }
-    g.player.velocity.y -= 15.0f * dt;
+    g.player.velocity.y -= ZQ3_GRAVITY * dt;
 
     float dx = g.player.velocity.x * dt;
     float dz = g.player.velocity.z * dt;
@@ -267,12 +264,10 @@ void zq3_step(float seconds) {
     }
     g.player.origin.y += g.player.velocity.y * dt;
 
-    const float player_height = 1.7f;
-    const float step_height = 0.75f;
     float floor_y;
-    float floor_query_max = g.player.origin.y - player_height + step_height;
+    float floor_query_max = g.player.origin.y - ZQ3_PLAYER_HEIGHT + ZQ3_STEP_HEIGHT;
     if (world_floor(g.player.origin.x, g.player.origin.z, floor_query_max, &floor_y)) {
-        float standing_y = floor_y + player_height;
+        float standing_y = floor_y + ZQ3_PLAYER_HEIGHT;
         if (g.player.origin.y <= standing_y && g.player.velocity.y <= 0.0f) {
             g.player.origin.y = standing_y;
             g.player.velocity.y = 0.0f;
