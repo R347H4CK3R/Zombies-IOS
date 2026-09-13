@@ -40,6 +40,11 @@ class BO2QuakePrimaryRuntimeTests(unittest.TestCase):
         self.assertIn("Engine/Quake3", project)
         self.assertIn("MetalKit.framework", project)
 
+    def test_xcodegen_excludes_engine_test_programs_from_app(self):
+        project = (ROOT / "project.yml").read_text()
+        self.assertIn("excludes:", project)
+        self.assertIn("Engine/Quake3/tests", project)
+
     def test_hijacked_is_primary_map_target(self):
         target = ROOT / "Sources/ZombiesIOS/Models/BO2MapTarget.swift"
         loader = ROOT / "Sources/ZombiesIOS/Services/BO2MapRuntimeLoader.swift"
