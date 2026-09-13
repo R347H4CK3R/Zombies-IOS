@@ -2,6 +2,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "../../../Engine/Quake3/zq3_runtime.h"
 
 #ifdef __cplusplus
 extern "C" {
