@@ -1,41 +1,60 @@
-# Zombies-IOS
+# BO2 Quake iOS
 
-Native iOS Zombies project targeting iPhone 16 Plus.
+A native iOS runtime project for loading **user-supplied Call of Duty: Black Ops II PS3 data** into a Quake-style C gameplay runtime with Metal rendering. The target is a directly launched iOS app/IPA—not a PS3 emulator.
 
-## Phase 1: PS3 dump scanner/importer (frozen)
+The first supported map target is **Hijacked (`mp_hijacked`)**. The current milestone focuses on the map-runtime foundation: signed T6 PS3 FastFile decoding, GfxWorld geometry extraction, MapEnts/spawn mapping, native movement/collision, first-person Metal rendering, touch controls, and reproducible iPhone Simulator/device builds.
 
-The scanner is now considered stable enough for development. Runtime work should consume verified imported files progressively instead of blocking on repeated filtering passes.
+## Architecture
 
-The first component is an on-device scanner that lets the user select a PS3 game folder from the iOS Files app, including folders located on an attached USB drive.
+`BO2 PS3 files -> T6 decoder -> BO2RuntimePackage -> native C runtime -> Metal renderer -> iOS touch gameplay`
 
-It recursively inventories the selected folder, identifies likely Call of Duty: Black Ops II / Zombies resources, groups files by type, and produces a JSON report. The scanner does **not** upload or copy the entire dump to GitHub.
+Key production components:
 
-### Initial goals
+- `Engine/Quake3/` — native C runtime boundary and GPLv2 licensing/attribution.
+- `T6PS3PayloadDecoder` — signed PS3 T6 FastFile decoding/decompression.
+- `T6GfxSurfaceMeshExtractor` — GfxWorld triangle-world reconstruction.
+- `BO2EntityParser` — MapEnts and multiplayer-spawn extraction.
+- `BO2RuntimePackage` — versioned user-local world interchange format.
+- `BO2MapRuntimeLoader` — Hijacked decode/package pipeline.
+- `QuakeRuntimeController` — Swift-to-C simulation bridge.
+- `QuakeGameplayView` — Metal first-person renderer and touch controls.
+- `BO2QuakeRootView` — production app entry.
 
-- Select a folder using the iOS document picker.
-- Work with Files-app locations, including USB storage exposed by iOS.
-- Use security-scoped access for external folders.
-- Recursively scan `PS3_GAME` / `USRDIR`.
-- Flag likely Zombies files such as `zm_*`, FastFiles, scripts, executable modules, audio, textures, models, and archives.
-- Export a portable JSON inventory for later converter development.
+Legacy SceneKit/Tranzit code remains in the source tree as development history/diagnostics, but it is **not the production gameplay entry path**.
 
-### Current runtime phase
+## Current milestone
 
-1. Persist verified BO2 Zombies files even when the legacy manifest is incomplete.
-2. Build a Tranzit runtime index from imported FastFiles, IPAKs, audio banks, and discovered references.
-3. Resolve Tranzit area resources into native map/runtime structures.
-4. Add map metadata, collision, textures, models, animation, and audio conversion.
-5. Add native Zombies gameplay, iPhone touch controls, and HUD.
-6. Continue producing IPA builds through GitHub Actions.
+Implemented in the Quake-first branch:
+
+- Recognize `mp_hijacked.ff`, `mp_hijacked.ipak`, and `mpl_hijacked.all.sabs` from a user-selected BO2 PS3 folder.
+- Decode the PS3 FastFile locally on-device.
+- Extract validated GfxWorld triangle geometry.
+- Extract the MapEnts lump and multiplayer spawn records.
+- Package geometry/entities/spawns into a versioned user-local runtime package using 32-bit indices.
+- Load the package into a native C movement/collision runtime.
+- Render through Metal rather than SceneKit.
+- Drive first-person position/look from the C player state.
+- Provide iPhone touch movement, look, aim, fire, reload, and jump inputs.
+- Validate the native path on a fresh iPhone 17 Simulator in GitHub Actions before producing an unsigned device IPA.
+
+This does **not** yet mean complete BO2 parity. Material/texture reconstruction, static models, full clip/collision semantics, weapon definitions/animations, audio, effects, HUD parity, multiplayer logic, Zombies logic, scripting and additional maps remain implementation work.
+
+## Running with owned BO2 data
+
+The app asks the user to choose a BO2 PS3 game folder through the iOS document picker. Retail game content is not distributed with this repository or the IPA. The source folder is read in place through iOS security-scoped access; it is not mirrored wholesale into the app container. Converted expressive runtime data stays user-local under the runtime cache.
+
+## Builds
+
+GitHub Actions performs source/content audits, contract tests, XcodeGen generation, iOS Simulator compilation, a fresh iPhone 17 launch/render validation, an unsigned device build, and IPA packaging. Successful `main` builds update the public `latest-build` release.
 
 ## Content and redistribution boundary
 
-The repository and distributed IPA are intended to contain only project-authored material or material with explicit redistribution rights. BO2/PS3 game files are supplied separately by the user through iOS Files or attached storage and are read from that external location; the project does not bundle them into the IPA or mirror the selected game folder into app-private storage.
+The repository and distributed IPA contain project-authored material or material with explicit redistribution rights. BO2/PS3 files remain user-supplied. Do not commit PS3 dumps, FastFiles, IPAKs, audio banks, ISOs, PKGs, EBOOT/SELF/SPRX binaries, extracted retail assets, or expressive derivatives.
 
-Generated metadata such as hashes, paths, offsets, and compatibility information may be cached separately. Decoded textures, reconstructed map geometry, extracted meshes, converted audio, copied scripts, and similar expressive derivatives remain user-local runtime data and are excluded from release artifacts by default.
+Generated metadata such as hashes, paths, offsets and compatibility information may be cached. Decoded textures, reconstructed geometry, extracted meshes, converted audio and other expressive derivatives remain user-local runtime data and are excluded from release artifacts by default.
 
-See [`docs/CONTENT_POLICY.md`](docs/CONTENT_POLICY.md) for the full contribution, provenance, allow-list, and CI audit rules.
+See [`docs/CONTENT_POLICY.md`](docs/CONTENT_POLICY.md) and the approved runtime design in [`docs/superpowers/specs/2026-09-13-bo2-quake3-ios-runtime-design.md`](docs/superpowers/specs/2026-09-13-bo2-quake3-ios-runtime-design.md).
 
-## Important
+## License / engine attribution
 
-Do not commit full PS3 dumps, FastFiles, IPAKs, audio banks, ISOs, PKGs, EBOOT/SELF/SPRX binaries, extracted game assets, or other copyrighted game archives to this repository. Converting, renaming, compressing, decompiling, encrypting, or repackaging a third-party asset does not by itself change its copyright status. Keep source dumps and expressive derivatives local and use the importer for user-supplied data.
+The `Engine/Quake3` subtree carries GNU GPL version 2 licensing information and documents the Quake III Arena source reference. See `Engine/Quake3/COPYING.txt` and `Engine/Quake3/README.md`.
