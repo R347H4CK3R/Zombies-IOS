@@ -6,6 +6,14 @@
 extern "C" {
 #endif
 
+#define ZQ3_PLAYER_HEIGHT 60.0f
+#define ZQ3_PLAYER_RADIUS 15.0f
+#define ZQ3_STEP_HEIGHT 18.0f
+#define ZQ3_RUN_SPEED 190.0f
+#define ZQ3_ADS_SPEED 120.0f
+#define ZQ3_JUMP_SPEED 270.0f
+#define ZQ3_GRAVITY 800.0f
+
 typedef struct { float x, y, z; } zq3_vec3;
 typedef struct { float forward, right, yaw_delta, pitch_delta; int jump, fire, aim, reload; } zq3_input;
 typedef struct { zq3_vec3 origin; zq3_vec3 velocity; float yaw, pitch; int on_ground; } zq3_player_state;
