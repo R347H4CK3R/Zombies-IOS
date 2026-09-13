@@ -23,20 +23,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run source and native runtime tests
-        run: python3 -m unittest discover -s Tools/tests -v
-
-      - name: Prepare CI visual test environment
+      - name: Prepare Python test environment
         run: |
           python3 -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
           .venv/bin/python -m pip install pillow
 
-      - name: Test CI visual validator
-        run: .venv/bin/python -m unittest Tools.tests.test_ci_visual_validate -v
+      - name: Run source, visual, and native runtime tests
+        run: .venv/bin/python -m unittest discover -s Tools/tests -v
 
       - name: Audit source tree for non-redistributable content
-        run: python3 Tools/content_audit.py . --allowlist Tools/content_allowlist.txt
+        run: .venv/bin/python Tools/content_audit.py . --allowlist Tools/content_allowlist.txt
 
       - name: Validate Quake runtime source boundary
         shell: bash
@@ -193,7 +190,7 @@ jobs:
           set -euo pipefail
           APP_PATH="$(find build/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -print -quit)"
           test -n "$APP_PATH"
-          python3 Tools/content_audit.py "$APP_PATH" --allowlist Tools/content_allowlist.txt
+          .venv/bin/python Tools/content_audit.py "$APP_PATH" --allowlist Tools/content_allowlist.txt
 
       - name: Package IPA
         run: |
