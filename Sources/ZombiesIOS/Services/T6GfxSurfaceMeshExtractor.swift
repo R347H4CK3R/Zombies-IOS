@@ -1,5 +1,23 @@
 import Foundation
 
+/// Production world mesh emitted by the real T6 GfxWorld extractor.
+///
+/// T6 stores each source index as UInt16, but a complete world can contain
+/// more than 65,535 vertices across its surfaces. Source indices are therefore
+/// rebased per surface into UInt32 runtime indices instead of constraining the
+/// assembled iOS world to the source index width.
+struct T6WorldRuntimeMesh: Equatable {
+    let vertices: [SIMD3<Float>]
+    let indices: [UInt32]
+    let vertexStride: Int
+    let vertexOffset: Int
+    let positionOffset: Int
+    let indexOffset: Int
+    let byteOrder: String
+
+    var triangleCount: Int { indices.count / 3 }
+}
+
 /// Reconstructs real T6/BO2 GfxWorld triangles from a decoded PS3 zone payload.
 ///
 /// T6 serializes GfxSurface as an 0x50-byte structure. The embedded
@@ -17,8 +35,8 @@ enum T6GfxSurfaceMeshExtractor {
     private static let minimumRun = 6
     private static let maxScanBytes = 128 * 1024 * 1024
     private static let maxSurfaceCount = 8_000
-    private static let maxOutputVertices = 65_000
-    private static let maxOutputTriangles = 140_000
+    private static let maxOutputVertices = 500_000
+    private static let maxOutputTriangles = 500_000
 
     private struct SurfaceRecord {
         let mins: SIMD3<Float>
@@ -38,11 +56,11 @@ enum T6GfxSurfaceMeshExtractor {
         let score: Float
     }
 
-    static func extract(from data: Data, scanLimit: Int) -> T6RuntimeMesh? {
+    static func extract(from data: Data, scanLimit: Int) -> T6WorldRuntimeMesh? {
         guard data.count >= gfxSurfaceStride * minimumRun else { return nil }
         let limit = min(data.count, min(max(4096, scanLimit), maxScanBytes))
 
-        return data.withUnsafeBytes { raw -> T6RuntimeMesh? in
+        return data.withUnsafeBytes { raw -> T6WorldRuntimeMesh? in
             guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return nil }
             let bytes = UnsafeBufferPointer(start: base, count: limit)
             guard let run = findBestSurfaceRun(bytes) else { return nil }
@@ -60,9 +78,9 @@ enum T6GfxSurfaceMeshExtractor {
             guard let indexBase = findIndexStreamBase(bytes, surfaces: surfaces) else { return nil }
 
             var vertices: [SIMD3<Float>] = []
-            var indices: [UInt16] = []
-            vertices.reserveCapacity(min(maxOutputVertices, 48_000))
-            indices.reserveCapacity(min(maxOutputTriangles * 3, 240_000))
+            var indices: [UInt32] = []
+            vertices.reserveCapacity(min(maxOutputVertices, 128_000))
+            indices.reserveCapacity(min(maxOutputTriangles * 3, 300_000))
 
             var accepted = 0
             for surface in surfaces {
@@ -81,14 +99,14 @@ enum T6GfxSurfaceMeshExtractor {
             }
 
             guard accepted >= 3, vertices.count >= 32, indices.count >= 60 else { return nil }
-            return T6RuntimeMesh(
+            return T6WorldRuntimeMesh(
                 vertices: convertForRuntime(vertices),
                 indices: indices,
                 vertexStride: packedWorldVertexStride,
                 vertexOffset: vertexBase,
                 positionOffset: 0,
                 indexOffset: indexBase,
-                byteOrder: "GFXWORLD:BE REAL S:\(accepted) V36 PS3"
+                byteOrder: "GFXWORLD:BE REAL S:\(accepted) V36 PS3 U32"
             )
         }
     }
@@ -325,7 +343,7 @@ enum T6GfxSurfaceMeshExtractor {
         vertexBase: Int,
         indexBase: Int,
         vertices: inout [SIMD3<Float>],
-        indices: inout [UInt16]
+        indices: inout [UInt32]
     ) -> Bool {
         guard vertices.count + surface.vertexCount <= maxOutputVertices else { return false }
         let oldVertexCount = vertices.count
@@ -352,7 +370,7 @@ enum T6GfxSurfaceMeshExtractor {
             return false
         }
 
-        var localIndices: [UInt16] = []
+        var localIndices: [UInt32] = []
         localIndices.reserveCapacity(surface.triCount * 3)
         var validTriangles = 0
         for tri in 0..<surface.triCount {
@@ -372,9 +390,9 @@ enum T6GfxSurfaceMeshExtractor {
             let c = vertices[baseOut + mapped[2]]
             let area2 = vectorLength(cross(b - a, c - a))
             guard area2.isFinite, area2 > 0.0000001 else { continue }
-            localIndices.append(UInt16(baseOut + mapped[0]))
-            localIndices.append(UInt16(baseOut + mapped[1]))
-            localIndices.append(UInt16(baseOut + mapped[2]))
+            localIndices.append(UInt32(baseOut + mapped[0]))
+            localIndices.append(UInt32(baseOut + mapped[1]))
+            localIndices.append(UInt32(baseOut + mapped[2]))
             validTriangles += 1
             if indices.count / 3 + validTriangles >= maxOutputTriangles { break }
         }
