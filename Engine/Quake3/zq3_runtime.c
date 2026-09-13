@@ -22,12 +22,9 @@ static void free_world(void) {
 }
 
 static void reset_weapon(void) {
+    memset(&g.weapon, 0, sizeof(g.weapon));
     g.weapon.magazine = 30;
     g.weapon.reserve = 120;
-    g.weapon.shots_fired = 0;
-    g.weapon.reloading = 0;
-    g.weapon.reload_remaining = 0.0f;
-    g.weapon.shot_cooldown = 0.0f;
 }
 
 static int barycentric_height(float px, float pz, const float *a, const float *b, const float *c, float *out_y) {
@@ -74,6 +71,72 @@ static int world_floor(float x, float z, float max_y, float *floor_y) {
     return found;
 }
 
+static float dot3(zq3_vec3 a, zq3_vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
+static zq3_vec3 sub3(zq3_vec3 a, zq3_vec3 b) { return (zq3_vec3){a.x-b.x, a.y-b.y, a.z-b.z}; }
+static zq3_vec3 cross3(zq3_vec3 a, zq3_vec3 b) {
+    return (zq3_vec3){a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x};
+}
+
+static int ray_triangle(zq3_vec3 origin, zq3_vec3 direction, const float *av, const float *bv, const float *cv, float *out_t) {
+    const float eps = 0.000001f;
+    zq3_vec3 a = {av[0], av[1], av[2]};
+    zq3_vec3 b = {bv[0], bv[1], bv[2]};
+    zq3_vec3 c = {cv[0], cv[1], cv[2]};
+    zq3_vec3 e1 = sub3(b, a);
+    zq3_vec3 e2 = sub3(c, a);
+    zq3_vec3 p = cross3(direction, e2);
+    float det = dot3(e1, p);
+    if (fabsf(det) < eps) return 0;
+    float inv = 1.0f / det;
+    zq3_vec3 tvec = sub3(origin, a);
+    float u = dot3(tvec, p) * inv;
+    if (u < 0.0f || u > 1.0f) return 0;
+    zq3_vec3 q = cross3(tvec, e1);
+    float v = dot3(direction, q) * inv;
+    if (v < 0.0f || u + v > 1.0f) return 0;
+    float t = dot3(e2, q) * inv;
+    if (t <= 0.02f) return 0;
+    *out_t = t;
+    return 1;
+}
+
+static void world_hitscan(void) {
+    g.weapon.last_shot_hit = 0;
+    g.weapon.last_hit_distance = 0.0f;
+    g.weapon.last_hit_position = (zq3_vec3){0,0,0};
+    if (!g.vertices || !g.indices) return;
+
+    const float deg = 0.01745329251994329577f;
+    float yaw = g.player.yaw * deg;
+    float pitch = g.player.pitch * deg;
+    float cp = cosf(pitch);
+    zq3_vec3 dir = {sinf(yaw) * cp, sinf(pitch), cosf(yaw) * cp};
+    zq3_vec3 origin = g.player.origin;
+    float nearest = 1000.0f;
+
+    for (size_t i = 0; i + 2 < g.index_count; i += 3) {
+        uint32_t ia = g.indices[i], ib = g.indices[i + 1], ic = g.indices[i + 2];
+        if (ia >= g.vertex_count || ib >= g.vertex_count || ic >= g.vertex_count) continue;
+        float t;
+        if (ray_triangle(origin, dir,
+                         &g.vertices[(size_t)ia * 3],
+                         &g.vertices[(size_t)ib * 3],
+                         &g.vertices[(size_t)ic * 3], &t) && t < nearest) {
+            nearest = t;
+            g.weapon.last_shot_hit = 1;
+        }
+    }
+
+    if (g.weapon.last_shot_hit) {
+        g.weapon.last_hit_distance = nearest;
+        g.weapon.last_hit_position = (zq3_vec3){
+            origin.x + dir.x * nearest,
+            origin.y + dir.y * nearest,
+            origin.z + dir.z * nearest
+        };
+    }
+}
+
 static void step_weapon(float dt) {
     const float reload_seconds = 1.9f;
     const float fire_interval = 0.095f;
@@ -104,6 +167,7 @@ static void step_weapon(float dt) {
         g.weapon.magazine -= 1;
         g.weapon.shots_fired += 1;
         g.weapon.shot_cooldown = fire_interval;
+        world_hitscan();
     }
 }
 
