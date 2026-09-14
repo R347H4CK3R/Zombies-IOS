@@ -1,9 +1,9 @@
 import Foundation
 
 enum BO2ZombiesManifest {
-    /// BO2 PS3 paths selected from the cleaned Zombies-only manifest.
-    /// Matching is case-insensitive and accepts the dump root, PS3_GAME,
-    /// USRDIR, english, or another selected folder containing these files.
+    /// Legacy Zombies fixture list retained for backwards-compatible validation.
+    /// Source selection for the full-game converter is handled by
+    /// `BO2ContentClassifier.isConvertibleResource(path:)`.
     static let relativePaths: Set<String> = [
         "PS3_GAME/USRDIR/english/code_post_gfx_1080_zm.ff",
         "PS3_GAME/USRDIR/english/code_post_gfx_720_zm.ff",
@@ -49,19 +49,16 @@ enum BO2ZombiesManifest {
     static let normalizedPaths: Set<String> = Set(relativePaths.map(normalize))
 
     static func contains(_ path: String) -> Bool {
+        BO2ContentClassifier.isConvertibleResource(path: path)
+    }
+
+    static func isLegacyZombiesFixture(_ path: String) -> Bool {
         let normalized = normalize(path)
         if normalizedPaths.contains(normalized) { return true }
-
-        // A dump may be wrapped in another directory before PS3_GAME.
         if let range = normalized.range(of: "ps3_game/") {
             let trimmed = String(normalized[range.lowerBound...])
             if normalizedPaths.contains(trimmed) { return true }
         }
-
-        // When the user selects PS3_GAME, USRDIR, or english directly, the
-        // enumerator returns a path relative to that selected folder. Match that
-        // relative suffix while keeping the report path usable directly under
-        // the selected root (no app-container copy is required).
         return normalizedPaths.contains { canonical in
             canonical.hasSuffix("/" + normalized)
         }
