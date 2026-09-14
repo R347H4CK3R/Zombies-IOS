@@ -73,9 +73,6 @@ enum T6GfxWorldStreamWalker {
         )
         try consumeString(pointerAt: 0x024, field: "skyBoxModel", raw: raw, cursor: &cursor)
 
-        // sunLight is a reusable raw GfxLight object. An OFFSET means it was already
-        // materialized earlier and contributes no bytes here. FOLLOWING must be
-        // traversed with GfxLight's nested GfxLightDef pointer, so do not guess.
         let sunLight = pointer(raw, 0x100)
         if sunLight == .following || sunLight == .insert {
             throw WalkError.inlineAssetUnsupported(field: "sunLight")
@@ -86,7 +83,7 @@ enum T6GfxWorldStreamWalker {
         _ = try consumeArray(count: u32(raw, 0x11c), pointer: pointer(raw, 0x120), elementSize: 16, alignment: 4, field: "shadowMapVolumePlanes", cursor: &cursor)
         _ = try consumeArray(count: u32(raw, 0x124), pointer: pointer(raw, 0x128), elementSize: 24, alignment: 4, field: "exposureVolumes", cursor: &cursor)
         _ = try consumeArray(count: u32(raw, 0x12c), pointer: pointer(raw, 0x130), elementSize: 16, alignment: 4, field: "exposureVolumePlanes", cursor: &cursor)
-        _ = try consumeArray(count: u32(raw, 0x134), pointer: pointer(raw, 0x138), elementSize: 92, alignment: 4, field: "worldFogVolumes", cursor: &cursor)
+        _ = try consumeArray(count: u32(raw, 0x134), pointer: pointer(raw, 0x138), elementSize: 100, alignment: 4, field: "worldFogVolumes", cursor: &cursor)
         _ = try consumeArray(count: u32(raw, 0x13c), pointer: pointer(raw, 0x140), elementSize: 16, alignment: 4, field: "worldFogVolumePlanes", cursor: &cursor)
         _ = try consumeArray(count: u32(raw, 0x144), pointer: pointer(raw, 0x148), elementSize: 48, alignment: 4, field: "worldFogModifierVolumes", cursor: &cursor)
         _ = try consumeArray(count: u32(raw, 0x14c), pointer: pointer(raw, 0x150), elementSize: 16, alignment: 4, field: "worldFogModifierVolumePlanes", cursor: &cursor)
@@ -97,7 +94,6 @@ enum T6GfxWorldStreamWalker {
         let nodeCount = u32(raw, 0x00c)
         _ = try consumeArray(count: planeCount, pointer: pointer(raw, 0x178), elementSize: 20, alignment: 4, field: "dpvsPlanes.planes", cursor: &cursor)
         _ = try consumeArray(count: nodeCount, pointer: pointer(raw, 0x17c), elementSize: 2, alignment: 2, field: "dpvsPlanes.nodes", cursor: &cursor)
-        // sceneEntCellBits @0x180 is runtime-virtual and consumes no file bytes.
 
         let cellCount = u32(raw, 0x174)
         let cells = try consumeArray(count: cellCount, pointer: pointer(raw, 0x188), elementSize: 48, alignment: 4, field: "cells", cursor: &cursor)
@@ -191,7 +187,6 @@ enum T6GfxWorldStreamWalker {
         ) {
             try walkReflectionProbes(probes, count: Int(probeCount), cursor: &cursor)
         }
-        // reflectionProbeTextures @+0x08 is runtime-virtual.
 
         let lightmapCount = u32(raw, draw + 0x0c)
         if let lightmaps = try consumeArray(
@@ -207,7 +202,6 @@ enum T6GfxWorldStreamWalker {
                 }
             }
         }
-        // lightmap texture arrays are runtime-virtual.
 
         let vertexCount = u32(raw, draw + 0x1c)
         let vd0Size = u32(raw, draw + 0x20)
