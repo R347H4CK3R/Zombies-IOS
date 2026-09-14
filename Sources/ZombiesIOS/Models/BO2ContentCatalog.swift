@@ -8,6 +8,45 @@ enum BO2ContentMode: String, Codable, CaseIterable, Sendable {
 }
 
 struct BO2ContentClassifier {
+    private static let convertibleExtensions: Set<String> = [
+        "ff", "ipak", "sabs", "sabl",
+        "gsc", "csc", "cfg", "csv", "str", "menu", "vision",
+        "iwi", "dds", "png", "jpg", "jpeg", "tga",
+        "wav", "mp3", "at3", "at9", "wem", "xma",
+        "xmodel", "xmodel_bin", "xanim", "xanim_bin", "material",
+        "json", "txt"
+    ]
+
+    private static let excludedNames: Set<String> = [
+        "eboot.bin", "param.sfo", "icon0.png", "pic0.png", "pic1.png",
+        "ps3_disc.sfb"
+    ]
+
+    private static let excludedExtensions: Set<String> = [
+        "self", "sprx", "prx", "pup", "sfo", "sfb"
+    ]
+
+    static func isConvertibleResource(path: String) -> Bool {
+        let normalized = path
+            .replacingOccurrences(of: "\\", with: "/")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            .lowercased()
+        let filename = (normalized as NSString).lastPathComponent
+        let ext = (filename as NSString).pathExtension.lowercased()
+
+        guard !excludedNames.contains(filename), !excludedExtensions.contains(ext) else {
+            return false
+        }
+
+        // The converter only consumes data/runtime assets. Keep platform binaries,
+        // update metadata, trophies, and other PS3-only files outside the pipeline.
+        guard normalized.contains("usrdir/") || !normalized.contains("ps3_game/") else {
+            return false
+        }
+
+        return convertibleExtensions.contains(ext)
+    }
+
     static func classify(path: String) -> BO2ContentMode {
         let normalized = path
             .replacingOccurrences(of: "\\", with: "/")
@@ -68,7 +107,7 @@ struct BO2ContentCatalog: Codable, Sendable {
         for mode in BO2ContentMode.allCases {
             grouped[mode] = []
         }
-        for path in paths {
+        for path in paths where BO2ContentClassifier.isConvertibleResource(path: path) {
             grouped[BO2ContentClassifier.classify(path: path), default: []].append(path)
         }
         self.filesByMode = grouped.mapValues {
