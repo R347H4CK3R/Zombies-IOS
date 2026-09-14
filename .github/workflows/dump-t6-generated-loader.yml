@@ -11,6 +11,11 @@ jobs:
   dump:
     runs-on: ubuntu-latest
     steps:
+      - name: Install x86 build dependencies
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y g++-multilib libc6-dev-i386
       - name: Clone OpenAssetTools
         run: git clone --depth 1 --recurse-submodules https://github.com/Laupetin/OpenAssetTools.git oat
       - name: Generate T6 zone loader source
