@@ -13,16 +13,19 @@ jobs:
     steps:
       - name: Clone OpenAssetTools
         run: git clone --depth 1 --recurse-submodules https://github.com/Laupetin/OpenAssetTools.git oat
-      - name: Generate project and zone code
+      - name: Generate T6 zone loader source
         working-directory: oat
         env:
           PREMAKE_NO_PROMPT: '1'
         run: |
+          set -euxo pipefail
           chmod +x generate.sh
           ./generate.sh
-          find . -type f \( -iname '*gfxworld*load*.cpp' -o -iname '*gfxworld*load*.h' \) -print | tee ../gfxworld-files.txt
+          make -C build -j2 config=release_x86 ZoneCode
+          find build -type f \( -iname '*gfxworld*load*.cpp' -o -iname '*gfxworld*load*.h' \) -print | tee ../gfxworld-files.txt
           mkdir -p ../generated
           while IFS= read -r f; do cp --parents "$f" ../generated/; done < ../gfxworld-files.txt
+          test -s ../gfxworld-files.txt
       - uses: actions/upload-artifact@v4
         with:
           name: t6-generated-gfxworld-loader
