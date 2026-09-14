@@ -21,7 +21,6 @@ enum T6ZoneIndexDecoder {
         case truncatedHeader
         case invalidCount(String, UInt32)
         case unexpectedPointer(String, T6ZonePointer)
-        case invalidAssetType(UInt32)
 
         var errorDescription: String? {
             switch self {
@@ -31,8 +30,6 @@ enum T6ZoneIndexDecoder {
                 return "T6 \(name) count \(count) is outside the supported range."
             case .unexpectedPointer(let name, let pointer):
                 return "T6 \(name) uses unsupported pointer \(pointer)."
-            case .invalidAssetType(let type):
-                return "T6 XAsset type \(type) is outside the retail asset table."
             }
         }
     }
@@ -41,7 +38,6 @@ enum T6ZoneIndexDecoder {
     private static let xassetListSize = 24
     private static let virtualBlock = 5
     private static let maximumListCount: UInt32 = 1_000_000
-    private static let maximumAssetType: UInt32 = 62
 
     static func decode(_ data: Data) throws -> T6ZoneIndex {
         guard data.count >= xfileHeaderSize + xassetListSize else { throw DecodeError.truncatedHeader }
@@ -123,8 +119,6 @@ enum T6ZoneIndexDecoder {
             case .following:
                 result.append(try cursor.resolveNullTerminatedString())
             default:
-                // Offset strings refer to existing normal-block storage. Keep the
-                // index deterministic without guessing a serialized location.
                 result.append("")
             }
         }
@@ -143,10 +137,8 @@ enum T6ZoneIndexDecoder {
         entries.reserveCapacity(count)
         for index in 0..<count {
             let offset = index * 8
-            let typeId = be32(table, offset)
-            guard typeId <= maximumAssetType else { throw DecodeError.invalidAssetType(typeId) }
             entries.append(T6ZoneAssetEntry(
-                typeId: typeId,
+                typeId: be32(table, offset),
                 pointer: T6ZonePointer.decode(be32(table, offset + 4))
             ))
         }
