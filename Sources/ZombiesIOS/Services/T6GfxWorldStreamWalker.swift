@@ -38,6 +38,10 @@ enum T6GfxWorldStreamWalker {
     private static let gfxWorldSize = 0x404
     private static let gfxLightSize = 352
     private static let gfxLightDefPointerOffset = 348
+    private static let gfxReflectionProbeSize = 80
+    private static let gfxReflectionProbeImageOffset = 64
+    private static let gfxReflectionProbeVolumesOffset = 68
+    private static let gfxReflectionProbeVolumeCountOffset = 72
     private static let drawOffset = 0x18c
     private static let maximumCount: UInt32 = 16_000_000
 
@@ -188,8 +192,8 @@ enum T6GfxWorldStreamWalker {
         let draw = drawOffset
         let probeCount = u32(raw, draw + 0x00)
         if let probes = try consumeArray(
-            count: probeCount, pointer: pointer(raw, draw + 0x04), elementSize: 76,
-            alignment: 4, field: "draw.reflectionProbes", cursor: &cursor
+            count: probeCount, pointer: pointer(raw, draw + 0x04), elementSize: gfxReflectionProbeSize,
+            alignment: 16, field: "draw.reflectionProbes", cursor: &cursor
         ) {
             try walkReflectionProbes(probes, count: Int(probeCount), cursor: &cursor)
         }
@@ -243,17 +247,17 @@ enum T6GfxWorldStreamWalker {
     }
 
     private static func walkReflectionProbes(_ probes: Data, count: Int, cursor: inout T6ZoneStreamCursor) throws {
-        guard probes.count == count * 76 else { throw WalkError.truncatedStructure("GfxReflectionProbe") }
+        guard probes.count == count * gfxReflectionProbeSize else { throw WalkError.truncatedStructure("GfxReflectionProbe") }
         for i in 0..<count {
-            let base = i * 76
-            let image = pointer(probes, base + 60)
+            let base = i * gfxReflectionProbeSize
+            let image = pointer(probes, base + gfxReflectionProbeImageOffset)
             if image == .following || image == .insert {
                 throw WalkError.inlineAssetUnsupported(field: "draw.reflectionProbes[\(i)].reflectionImage")
             }
-            let volumeCount = u32(probes, base + 68)
+            let volumeCount = u32(probes, base + gfxReflectionProbeVolumeCountOffset)
             _ = try consumeArray(
                 count: volumeCount,
-                pointer: pointer(probes, base + 64),
+                pointer: pointer(probes, base + gfxReflectionProbeVolumesOffset),
                 elementSize: 96,
                 alignment: 4,
                 field: "draw.reflectionProbes[\(i)].probeVolumes",
@@ -269,7 +273,7 @@ enum T6GfxWorldStreamWalker {
         cursor: inout T6ZoneStreamCursor
     ) throws {
         let value = pointer(raw, offset)
-        if value == .following {
+        if value == .following || value == .insert {
             _ = try cursor.resolveNullTerminatedString()
         }
     }
@@ -317,19 +321,19 @@ enum T6GfxWorldStreamWalker {
     }
 
     private static func pointer(_ data: Data, _ offset: Int) -> T6ZonePointer {
-        T6ZonePointer.decode(u32(data, offset))
+        T6ZonePointer(rawValue: u32(data, offset))
     }
 
     private static func u16(_ data: Data, _ offset: Int) -> UInt16 {
         guard offset >= 0, offset + 2 <= data.count else { return 0 }
-        return (UInt16(data[offset]) << 8) | UInt16(data[offset + 1])
+        return UInt16(data[offset]) << 8 | UInt16(data[offset + 1])
     }
 
     private static func u32(_ data: Data, _ offset: Int) -> UInt32 {
         guard offset >= 0, offset + 4 <= data.count else { return 0 }
-        return (UInt32(data[offset]) << 24)
-            | (UInt32(data[offset + 1]) << 16)
-            | (UInt32(data[offset + 2]) << 8)
+        return UInt32(data[offset]) << 24
+            | UInt32(data[offset + 1]) << 16
+            | UInt32(data[offset + 2]) << 8
             | UInt32(data[offset + 3])
     }
 }
