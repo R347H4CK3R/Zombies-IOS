@@ -8,18 +8,19 @@ enum BO2ContentMode: String, Codable, CaseIterable, Sendable {
 }
 
 struct BO2ContentClassifier {
-    private static let convertibleExtensions: Set<String> = [
-        "ff", "ipak", "sabs", "sabl",
+    private static let knownConvertibleExtensions: Set<String> = [
+        "ff", "ipak", "sabs", "sabl", "clump",
         "gsc", "csc", "cfg", "csv", "str", "menu", "vision",
         "iwi", "dds", "png", "jpg", "jpeg", "tga",
         "wav", "mp3", "at3", "at9", "wem", "xma",
+        "webm", "bik",
         "xmodel", "xmodel_bin", "xanim", "xanim_bin", "material",
         "json", "txt"
     ]
 
     private static let excludedNames: Set<String> = [
         "eboot.bin", "param.sfo", "icon0.png", "pic0.png", "pic1.png",
-        "ps3_disc.sfb"
+        "ps3_disc.sfb", "ps3logo.dat"
     ]
 
     private static let excludedExtensions: Set<String> = [
@@ -34,17 +35,26 @@ struct BO2ContentClassifier {
         let filename = (normalized as NSString).lastPathComponent
         let ext = (filename as NSString).pathExtension.lowercased()
 
-        guard !excludedNames.contains(filename), !excludedExtensions.contains(ext) else {
+        guard !filename.hasPrefix("._"),
+              !normalized.contains("/__macosx/"),
+              !excludedNames.contains(filename),
+              !excludedExtensions.contains(ext),
+              !ext.isEmpty else {
             return false
         }
 
-        // The converter only consumes data/runtime assets. Keep platform binaries,
-        // update metadata, trophies, and other PS3-only files outside the pipeline.
-        guard normalized.contains("usrdir/") || !normalized.contains("ps3_game/") else {
+        // A complete BO2 dump contains many retail data extensions that are not
+        // individually documented (including Bink/WebM movies and packed clumps).
+        // Treat every non-platform file below USRDIR as game data so the full-game
+        // inventory cannot silently omit an asset class. For unit fixtures and
+        // directly selected language folders, retain the known-extension path.
+        if normalized.contains("usrdir/") {
+            return true
+        }
+        if normalized.contains("ps3_game/") {
             return false
         }
-
-        return convertibleExtensions.contains(ext)
+        return knownConvertibleExtensions.contains(ext)
     }
 
     static func classify(path: String) -> BO2ContentMode {
@@ -54,8 +64,6 @@ struct BO2ContentClassifier {
         let filename = (normalized as NSString).lastPathComponent
         let stem = (filename as NSString).deletingPathExtension
 
-        // Mode-specific markers must win over broad shared names such as
-        // common_zm, patch_ui_zm, and code_post_gfx_mp.
         if isZombies(stem: stem, path: normalized) { return .zombies }
         if isMultiplayer(stem: stem, path: normalized) { return .multiplayer }
         if isCampaign(stem: stem, path: normalized) { return .campaign }
