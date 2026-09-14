@@ -38,12 +38,26 @@ enum T6GfxWorldStreamWalker {
     private static let gfxWorldSize = 0x404
     private static let gfxLightSize = 352
     private static let gfxLightDefPointerOffset = 348
+
+    // Retail PS3 GfxReflectionProbe is 80 bytes because of PS3 ABI alignment.
     private static let gfxReflectionProbeSize = 80
     private static let gfxReflectionProbeImageOffset = 64
     private static let gfxReflectionProbeVolumesOffset = 68
     private static let gfxReflectionProbeVolumeCountOffset = 72
+
+    // T6 GfxImage has no vec4-sensitive host/PS3 divergence in the verified
+    // 32-bit layout. ZoneCode's generated loader reports an 80-byte body.
+    private static let gfxImageSize = 80
+    private static let gfxImageTextureLoadDefOffset = 0
+    private static let gfxImageNameOffset = 72
+    private static let gfxImageLoadDefHeaderSize = 12
+    private static let gfxImageLoadDefResourceSizeOffset = 8
+
+    private static let xfileBlockTemp = 0
+    private static let xfileBlockVirtual = 5
     private static let drawOffset = 0x18c
     private static let maximumCount: UInt32 = 16_000_000
+    private static let maximumInlineImageBytes: UInt32 = 512 * 1024 * 1024
 
     static func walk(
         zoneData: Data,
@@ -205,10 +219,12 @@ enum T6GfxWorldStreamWalker {
         ) {
             for i in 0..<Int(lightmapCount) {
                 for imageField in 0..<2 {
-                    let image = pointer(lightmaps, i * 8 + imageField * 4)
-                    if image == .following || image == .insert {
-                        throw WalkError.inlineAssetUnsupported(field: "draw.lightmaps[\(i)].image[\(imageField)]")
-                    }
+                    let field = "draw.lightmaps[\(i)].image[\(imageField)]"
+                    try consumeGfxImageAsset(
+                        pointer: pointer(lightmaps, i * 8 + imageField * 4),
+                        field: field,
+                        cursor: &cursor
+                    )
                 }
             }
         }
@@ -250,10 +266,12 @@ enum T6GfxWorldStreamWalker {
         guard probes.count == count * gfxReflectionProbeSize else { throw WalkError.truncatedStructure("GfxReflectionProbe") }
         for i in 0..<count {
             let base = i * gfxReflectionProbeSize
-            let image = pointer(probes, base + gfxReflectionProbeImageOffset)
-            if image == .following || image == .insert {
-                throw WalkError.inlineAssetUnsupported(field: "draw.reflectionProbes[\(i)].reflectionImage")
-            }
+            try consumeGfxImageAsset(
+                pointer: pointer(probes, base + gfxReflectionProbeImageOffset),
+                field: "draw.reflectionProbes[\(i)].reflectionImage",
+                cursor: &cursor
+            )
+
             let volumeCount = u32(probes, base + gfxReflectionProbeVolumeCountOffset)
             _ = try consumeArray(
                 count: volumeCount,
@@ -263,6 +281,48 @@ enum T6GfxWorldStreamWalker {
                 field: "draw.reflectionProbes[\(i)].probeVolumes",
                 cursor: &cursor
             )
+        }
+    }
+
+    /// Mirrors the generated T6 Loader_GfxImage ordering while preserving the
+    /// retail PS3 32-bit serialized layout. The caller already owns the asset
+    /// pointer field; this method consumes only the FOLLOWING/INSERT payload.
+    private static func consumeGfxImageAsset(
+        pointer assetPointer: T6ZonePointer,
+        field: String,
+        cursor: inout T6ZoneStreamCursor
+    ) throws {
+        guard assetPointer == .following || assetPointer == .insert else { return }
+
+        try cursor.pushBlock(xfileBlockTemp)
+        defer { try? cursor.popBlock() }
+
+        let image = try cursor.resolveFollowing(alignment: 4, length: gfxImageSize)
+
+        // Generated Load_GfxImage pushes VIRTUAL and deliberately loads name
+        // before the embedded GfxTexture.
+        try cursor.pushBlock(xfileBlockVirtual)
+        defer { try? cursor.popBlock() }
+
+        let namePointer = pointer(image, gfxImageNameOffset)
+        if namePointer == .following || namePointer == .insert {
+            _ = try cursor.resolveNullTerminatedString()
+        }
+
+        let loadDefPointer = pointer(image, gfxImageTextureLoadDefOffset)
+        guard loadDefPointer == .following || loadDefPointer == .insert else { return }
+
+        // Generated Load_GfxTexture switches back to TEMP for reusable loadDef.
+        try cursor.pushBlock(xfileBlockTemp)
+        defer { try? cursor.popBlock() }
+
+        let header = try cursor.resolveFollowing(alignment: 4, length: gfxImageLoadDefHeaderSize)
+        let resourceSize = u32(header, gfxImageLoadDefResourceSizeOffset)
+        guard resourceSize <= maximumInlineImageBytes else {
+            throw WalkError.invalidCount(field: "\(field).texture.loadDef.resourceSize", value: resourceSize)
+        }
+        if resourceSize > 0 {
+            _ = try cursor.resolveFollowing(alignment: 1, length: Int(resourceSize))
         }
     }
 
