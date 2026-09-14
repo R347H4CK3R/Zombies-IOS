@@ -1,0 +1,63 @@
+name: Probe T6 PS3 Layouts
+
+on:
+  push:
+    branches: [bo2-full-conversion]
+    paths:
+      - '.github/workflows/t6-ps3-layout-probe.yml'
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-multilib
+      - name: Clone OpenAssetTools
+        run: git clone --depth 1 https://github.com/Laupetin/OpenAssetTools.git oat
+      - name: Compile layout probe
+        run: |
+          cat > layout.cpp <<'CPP'
+          #include <cstddef>
+          #include <iostream>
+          #include "oat/src/Common/Game/T6/T6_Assets.h"
+          using namespace T6;
+          #define SZ(T) std::cout << "SIZE " #T " " << sizeof(T) << "\n"
+          #define OF(T,F) std::cout << "OFF " #T "." #F " " << offsetof(T,F) << "\n"
+          int main() {
+            SZ(GfxWorld); SZ(GfxWorldStreamInfo); SZ(GfxStreamingAabbTree); SZ(GfxLight); SZ(GfxLightCorona);
+            SZ(GfxShadowMapVolume); SZ(GfxVolumePlane); SZ(GfxExposureVolume); SZ(GfxWorldFog); SZ(GfxWorldFogVolume);
+            SZ(GfxWorldFogModifierVolume); SZ(GfxLutVolume); SZ(GfxWorldDpvsPlanes); SZ(cplane_s); SZ(GfxCell); SZ(GfxAabbTree);
+            SZ(GfxPortalWritable); SZ(DpvsPlane); SZ(GfxPortal); SZ(GfxReflectionProbeVolumeData); SZ(GfxReflectionProbe);
+            SZ(GfxLightmapArray); SZ(GfxWorldDraw); SZ(GfxWorldVertexData0); SZ(GfxWorldVertexData1); SZ(GfxSurface);
+            OF(GfxWorld,name); OF(GfxWorld,baseName); OF(GfxWorld,planeCount); OF(GfxWorld,nodeCount); OF(GfxWorld,surfaceCount);
+            OF(GfxWorld,streamInfo); OF(GfxWorld,skyBoxModel); OF(GfxWorld,sunLight); OF(GfxWorld,sunPrimaryLightIndex); OF(GfxWorld,primaryLightCount);
+            OF(GfxWorld,coronaCount); OF(GfxWorld,coronas); OF(GfxWorld,shadowMapVolumeCount); OF(GfxWorld,shadowMapVolumes);
+            OF(GfxWorld,shadowMapVolumePlaneCount); OF(GfxWorld,shadowMapVolumePlanes); OF(GfxWorld,exposureVolumeCount); OF(GfxWorld,exposureVolumes);
+            OF(GfxWorld,exposureVolumePlaneCount); OF(GfxWorld,exposureVolumePlanes); OF(GfxWorld,worldFogVolumeCount); OF(GfxWorld,worldFogVolumes);
+            OF(GfxWorld,worldFogVolumePlaneCount); OF(GfxWorld,worldFogVolumePlanes); OF(GfxWorld,worldFogModifierVolumeCount); OF(GfxWorld,worldFogModifierVolumes);
+            OF(GfxWorld,worldFogModifierVolumePlaneCount); OF(GfxWorld,worldFogModifierVolumePlanes); OF(GfxWorld,lutVolumeCount); OF(GfxWorld,lutVolumes);
+            OF(GfxWorld,lutVolumePlaneCount); OF(GfxWorld,lutVolumePlanes); OF(GfxWorld,dpvsPlanes); OF(GfxWorld,cells); OF(GfxWorld,draw);
+            OF(GfxWorldStreamInfo,aabbTreeCount); OF(GfxWorldStreamInfo,aabbTrees); OF(GfxWorldStreamInfo,leafRefCount); OF(GfxWorldStreamInfo,leafRefs);
+            OF(GfxWorldDpvsPlanes,cellCount); OF(GfxWorldDpvsPlanes,planes); OF(GfxWorldDpvsPlanes,nodes); OF(GfxWorldDpvsPlanes,sceneEntCellBits);
+            OF(GfxCell,aabbTreeCount); OF(GfxCell,aabbTree); OF(GfxCell,portalCount); OF(GfxCell,portals); OF(GfxCell,reflectionProbeCount); OF(GfxCell,reflectionProbes);
+            OF(GfxAabbTree,smodelIndexCount); OF(GfxAabbTree,smodelIndexes);
+            OF(GfxPortal,writable); OF(GfxPortal,cell); OF(GfxPortal,vertices); OF(GfxPortal,vertexCount);
+            OF(GfxPortalWritable,hullPointCount); OF(GfxPortalWritable,hullPoints); OF(GfxPortalWritable,queuedParent);
+            OF(GfxWorldDraw,reflectionProbeCount); OF(GfxWorldDraw,reflectionProbes); OF(GfxWorldDraw,lightmapCount); OF(GfxWorldDraw,lightmaps);
+            OF(GfxWorldDraw,vertexCount); OF(GfxWorldDraw,vertexDataSize0); OF(GfxWorldDraw,vd0); OF(GfxWorldDraw,vertexDataSize1); OF(GfxWorldDraw,vd1);
+            OF(GfxWorldDraw,indexCount); OF(GfxWorldDraw,indices);
+            OF(GfxReflectionProbe,probeVolumes); OF(GfxReflectionProbe,probeVolumeCount);
+            OF(GfxWorldVertexData0,data); OF(GfxWorldVertexData1,data);
+            return 0;
+          }
+          CPP
+          g++ -std=c++23 -m32 layout.cpp -o layout
+          ./layout | tee t6-layout.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: t6-ps3-layout
+          path: t6-layout.txt
+          retention-days: 1
