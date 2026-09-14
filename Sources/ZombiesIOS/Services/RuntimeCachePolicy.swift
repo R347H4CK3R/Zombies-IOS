@@ -26,9 +26,24 @@ enum RuntimeCachePolicy {
         return url
     }
 
+    static func gameDataDirectory(fileManager: FileManager = .default) throws -> URL {
+        let root = try appRoot(fileManager: fileManager)
+        let url = root.appendingPathComponent("GameData", isDirectory: true)
+        try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
     static func clearExpressiveCache(fileManager: FileManager = .default) throws {
         let root = try appRoot(fileManager: fileManager)
         let url = root.appendingPathComponent("runtime-expressive-cache", isDirectory: true)
+        if fileManager.fileExists(atPath: url.path) {
+            try fileManager.removeItem(at: url)
+        }
+    }
+
+    static func clearGameData(fileManager: FileManager = .default) throws {
+        let root = try appRoot(fileManager: fileManager)
+        let url = root.appendingPathComponent("GameData", isDirectory: true)
         if fileManager.fileExists(atPath: url.path) {
             try fileManager.removeItem(at: url)
         }
