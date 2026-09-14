@@ -26,6 +26,7 @@ struct T6ZoneStreamCursor: Sendable {
         case delayedBlockUnsupported(Int)
         case blockOverflow(block: Int, requestedEnd: Int, size: Int)
         case serializedDataTruncated(offset: Int, length: Int, size: Int)
+        case unterminatedString(offset: Int, limit: Int)
 
         var errorDescription: String? {
             switch self {
@@ -41,6 +42,8 @@ struct T6ZoneStreamCursor: Sendable {
                 return "T6 block \(block) overflow: requested \(end) bytes, block size is \(size)."
             case .serializedDataTruncated(let offset, let length, let size):
                 return "T6 serialized data is truncated at \(offset) for \(length) bytes (size \(size))."
+            case .unterminatedString(let offset, let limit):
+                return "T6 inline string at \(offset) has no terminator within \(limit) bytes."
             }
         }
     }
@@ -66,20 +69,14 @@ struct T6ZoneStreamCursor: Sendable {
         self.blockOffsets = Array(repeating: 0, count: 8)
         self.currentSerializedOffset = serializedOffset
         guard serializedOffset >= 0, serializedOffset <= serializedData.count else {
-            throw CursorError.serializedDataTruncated(
-                offset: serializedOffset,
-                length: 0,
-                size: serializedData.count
-            )
+            throw CursorError.serializedDataTruncated(offset: serializedOffset, length: 0, size: serializedData.count)
         }
     }
 
     mutating func pushBlock(_ block: Int) throws {
         guard block >= 0, block < blockSizes.count else { throw CursorError.invalidBlock(block) }
         stack.append(block)
-        if kind(for: block) == .temp {
-            tempSavedOffsets.append(blockOffsets[block])
-        }
+        if kind(for: block) == .temp { tempSavedOffsets.append(blockOffsets[block]) }
     }
 
     @discardableResult
@@ -97,9 +94,7 @@ struct T6ZoneStreamCursor: Sendable {
         return blockOffsets[block]
     }
 
-    func currentBlock() -> Int? {
-        stack.last
-    }
+    func currentBlock() -> Int? { stack.last }
 
     mutating func resolveFollowing(alignment: Int, length: Int) throws -> Data {
         guard let block = stack.last else { throw CursorError.emptyBlockStack }
@@ -122,11 +117,7 @@ struct T6ZoneStreamCursor: Sendable {
         case .temp, .normal:
             let dataEnd = currentSerializedOffset + length
             guard currentSerializedOffset >= 0, dataEnd <= serializedData.count else {
-                throw CursorError.serializedDataTruncated(
-                    offset: currentSerializedOffset,
-                    length: length,
-                    size: serializedData.count
-                )
+                throw CursorError.serializedDataTruncated(offset: currentSerializedOffset, length: length, size: serializedData.count)
             }
             let result = serializedData.subdata(in: currentSerializedOffset..<dataEnd)
             currentSerializedOffset = dataEnd
@@ -134,14 +125,37 @@ struct T6ZoneStreamCursor: Sendable {
         }
     }
 
+    mutating func resolveNullTerminatedString(alignment: Int = 1, maxLength: Int = 16_384) throws -> String {
+        guard let block = stack.last else { throw CursorError.emptyBlockStack }
+        guard kind(for: block) == .temp || kind(for: block) == .normal else {
+            throw CursorError.delayedBlockUnsupported(block)
+        }
+
+        let aligned = Self.align(blockOffsets[block], to: max(1, alignment))
+        let start = currentSerializedOffset
+        let available = min(maxLength, serializedData.count - start)
+        guard available > 0 else {
+            throw CursorError.serializedDataTruncated(offset: start, length: 1, size: serializedData.count)
+        }
+
+        var length = 0
+        while length < available, serializedData[start + length] != 0 { length += 1 }
+        guard length < available else { throw CursorError.unterminatedString(offset: start, limit: maxLength) }
+
+        let consumed = length + 1
+        let logicalEnd = aligned + consumed
+        guard logicalEnd <= blockSizes[block] else {
+            throw CursorError.blockOverflow(block: block, requestedEnd: logicalEnd, size: blockSizes[block])
+        }
+        blockOffsets[block] = logicalEnd
+        currentSerializedOffset += consumed
+        return String(data: serializedData.subdata(in: start..<(start + length)), encoding: .utf8) ?? ""
+    }
+
     mutating func skipSerialized(_ length: Int) throws {
         let end = currentSerializedOffset + length
         guard length >= 0, end <= serializedData.count else {
-            throw CursorError.serializedDataTruncated(
-                offset: currentSerializedOffset,
-                length: length,
-                size: serializedData.count
-            )
+            throw CursorError.serializedDataTruncated(offset: currentSerializedOffset, length: length, size: serializedData.count)
         }
         currentSerializedOffset = end
     }
