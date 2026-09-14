@@ -47,16 +47,16 @@ struct ScanReport: Codable {
     let files: [ScannedFile]
 
     var zombiesCandidates: [ScannedFile] {
-        files.filter(\.isLikelyZombiesContent)
+        files.filter { $0.bo2ContentMode == .zombies }
     }
 
     var zeroByteFiles: [ScannedFile] {
         files.filter { $0.size == 0 }
     }
 
-    var missingManifestCount: Int {
-        max(0, BO2ZombiesManifest.relativePaths.count - totalFiles)
-    }
+    /// Compatibility property for the former fixed Zombies manifest. Full-game
+    /// conversion is inventory-driven, so readiness no longer requires one hard-coded list.
+    var missingManifestCount: Int { 0 }
 
     var inspectedFileCount: Int {
         files.filter { $0.inspection != nil }.count
@@ -98,7 +98,7 @@ struct ScanReport: Codable {
     }
 
     var isBuildReady: Bool {
-        missingManifestCount == 0 &&
+        !files.isEmpty &&
         zeroByteFiles.isEmpty &&
         incompleteReadFiles.isEmpty &&
         uninspectedContainerFiles.isEmpty &&
