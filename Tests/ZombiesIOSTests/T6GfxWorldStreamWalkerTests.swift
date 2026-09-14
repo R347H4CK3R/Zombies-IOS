@@ -44,8 +44,6 @@ final class T6GfxWorldStreamWalkerTests: XCTestCase {
         putBE32(0xFFFF_FFFF, into: &zone, at: 0x100)
         configureMinimalDraw(in: &zone, drawOffset: drawOffset, vd0: vd0, vd1: vd1)
 
-        // A zeroed GfxLight has a null nested GfxLightDef pointer, so the loader
-        // consumes only the verified 352-byte GfxLight body before continuing.
         zone.append(Data(repeating: 0, count: sunLightSize))
         zone.append(vd0)
         zone.append(vd1)
@@ -58,6 +56,37 @@ final class T6GfxWorldStreamWalkerTests: XCTestCase {
         )
 
         XCTAssertEqual(result.vertexData0SerializedOffset, gfxWorldSize + sunLightSize)
+        XCTAssertEqual(result.vertexData0, vd0)
+        XCTAssertEqual(result.vertexData1, vd1)
+        XCTAssertEqual(result.indices, indices)
+    }
+
+    func testPS3ReflectionProbeArrayUses80ByteSerializedStride() throws {
+        let gfxWorldSize = 0x404
+        let drawOffset = 0x18c
+        let probeStride = 80
+        let probeCount = 2
+        let vd0 = Data([0x31, 0x32, 0x33, 0x34])
+        let vd1 = Data([0x41, 0x42, 0x43, 0x44])
+        let indices = Data([0x00, 0x00])
+
+        var zone = Data(repeating: 0, count: gfxWorldSize)
+        putBE32(UInt32(probeCount), into: &zone, at: drawOffset)
+        putBE32(0xFFFF_FFFF, into: &zone, at: drawOffset + 0x04)
+        configureMinimalDraw(in: &zone, drawOffset: drawOffset, vd0: vd0, vd1: vd1)
+
+        zone.append(Data(repeating: 0, count: probeStride * probeCount))
+        zone.append(vd0)
+        zone.append(vd1)
+        zone.append(indices)
+
+        let result = try T6GfxWorldStreamWalker.walk(
+            zoneData: zone,
+            gfxWorldSerializedOffset: 0,
+            tempBlockSize: UInt32(zone.count + 1024)
+        )
+
+        XCTAssertEqual(result.vertexData0SerializedOffset, gfxWorldSize + probeStride * probeCount)
         XCTAssertEqual(result.vertexData0, vd0)
         XCTAssertEqual(result.vertexData1, vd1)
         XCTAssertEqual(result.indices, indices)
