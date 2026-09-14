@@ -73,6 +73,14 @@ struct T6ZoneStreamCursor: Sendable {
         }
     }
 
+    mutating func seedBlockOffset(_ block: Int, offset: Int) throws {
+        guard block >= 0, block < blockSizes.count else { throw CursorError.invalidBlock(block) }
+        guard offset >= 0, offset <= blockSizes[block] else {
+            throw CursorError.blockOverflow(block: block, requestedEnd: offset, size: blockSizes[block])
+        }
+        blockOffsets[block] = offset
+    }
+
     mutating func pushBlock(_ block: Int) throws {
         guard block >= 0, block < blockSizes.count else { throw CursorError.invalidBlock(block) }
         stack.append(block)
