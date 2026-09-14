@@ -27,17 +27,19 @@ jobs:
           chmod +x generate.sh
           ./generate.sh
           make -C build -j2 config=release_x86 ZoneCode
-          find build -type f \( -iname '*gfxworld*load*.cpp' -o -iname '*gfxworld*load*.h' \) -print | tee ../gfxworld-files.txt
+          T6_ROOT="build/src/ZoneCode/Game/T6/XAssets"
+          test -d "$T6_ROOT"
+          find "$T6_ROOT" -type f \( -name '*_load_db.cpp' -o -name '*_load_db.h' \) -print | sort | tee ../t6-loader-files.txt
+          test -s ../t6-loader-files.txt
           mkdir -p ../generated
-          while IFS= read -r f; do cp --parents "$f" ../generated/; done < ../gfxworld-files.txt
-          test -s ../gfxworld-files.txt
+          while IFS= read -r f; do cp --parents "$f" ../generated/; done < ../t6-loader-files.txt
+          grep -R -n -E 'Load_GfxLight|Loader_GfxLightDef|Loader_GfxImage|Load_GfxWorld' "$T6_ROOT" > ../t6-loader-symbols.txt || true
       - uses: actions/upload-artifact@v4
         with:
-          name: t6-generated-gfxworld-loader
+          name: t6-generated-loaders
           path: |
-            gfxworld-files.txt
+            t6-loader-files.txt
+            t6-loader-symbols.txt
             generated/
           if-no-files-found: error
           retention-days: 1
-
-# Refresh this artifact whenever the T6 loader reference needs re-verification.
