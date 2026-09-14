@@ -17,6 +17,17 @@
 - Hijacked is a regression fixture, not a scope limit.
 - Completion means built unsigned IPA plus playable Campaign, Multiplayer, and Zombies device validation; indexing alone is not completion.
 
+## Interruption / Resume Protocol
+- Maintain `docs/CONVERSION_CHECKPOINT.md` as the single resume anchor.
+- Update the checkpoint after every meaningful code commit, CI result, newly discovered blocker, or required external-input change.
+- The checkpoint must always record: active branch, current task/substep, last completed commit, latest CI run and conclusion, exact failing test/error when red, files currently being changed, next concrete action, and whether user input is required.
+- Never rely on chat history alone to resume. On a new session, read the checkpoint first, verify the branch head still matches, then continue from the recorded next action.
+- Each conversion stage must be independently resumable. Persist completed source hashes, converter version, per-zone status, and per-asset-class status in `GameDataManifest`; write converted output atomically through `.part` files and rename only after validation.
+- Do not redo a conversion unit whose source hash + converter version + output validation already match the manifest.
+- If interrupted during a file conversion, discard only its incomplete `.part` output and restart that file/asset unit; preserve all previously validated outputs.
+- If CI is interrupted or cancelled, rerun only the latest branch head and preserve the last known green run ID in the checkpoint.
+- Before claiming a task complete, update its checkboxes here and write the new resume position to the checkpoint.
+
 ---
 
 ### Task 1: Full-game source classification
@@ -29,11 +40,12 @@
 **Interfaces:**
 - Produces: `BO2ContentCatalog`, `BO2ContentMode`, and mode-aware file classification consumed by conversion and UI.
 
-- [ ] Add tests/fixtures for `sp_*`, `mp_*`, `zm_*`, common/global, localization, FastFiles, IPAKs, audio banks, scripts, and supporting archives.
-- [ ] Run scanner classification tests and verify Zombies-only assumptions fail.
-- [ ] Implement `BO2ContentMode { campaign, multiplayer, zombies, common }` and deterministic classification.
-- [ ] Run tests and verify all mode classifications pass.
-- [ ] Commit `feat: classify full BO2 content catalog`.
+- [x] Add tests/fixtures for `sp_*`, `mp_*`, `zm_*`, common/global, localization, FastFiles, IPAKs, audio banks, scripts, and supporting archives.
+- [x] Run scanner classification tests and verify Zombies-only assumptions fail.
+- [x] Implement `BO2ContentMode { campaign, multiplayer, zombies, common }` and deterministic classification.
+- [ ] Generalize source selection so the scanner accepts all convertible BO2 resources instead of the Zombies-only manifest.
+- [ ] Run tests and verify all mode classifications and full-game source selection pass.
+- [ ] Commit/update checkpoint for completed Task 1.
 
 ### Task 2: Unified resumable conversion manifest
 
@@ -48,7 +60,7 @@
 - [ ] Add tests for resume, stale converter version, source hash changes, interrupted writes, and no-copy source semantics.
 - [ ] Implement manifest schema and atomic `.part` replacement.
 - [ ] Verify interrupted conversion resumes without reprocessing valid records.
-- [ ] Commit `feat: add resumable GameData manifest`.
+- [ ] Commit `feat: add resumable GameData manifest` and update checkpoint.
 
 ### Task 3: Deterministic T6 stream relocation
 
@@ -66,7 +78,7 @@
 - [ ] Implement stream cursor state and bounds-checked relocation.
 - [ ] Route GfxWorld/GfxWorldDraw vertex/index extraction through the cursor.
 - [ ] Verify Hijacked metadata counts can be resolved without guessed offsets.
-- [ ] Commit `feat: resolve T6 inline zone streams`.
+- [ ] Commit `feat: resolve T6 inline zone streams` and update checkpoint.
 
 ### Task 4: Typed T6 asset table decoding
 
@@ -81,7 +93,7 @@
 - [ ] Add sanitized asset-table fixtures for each supported class plus unknown-type preservation.
 - [ ] Implement bounds-checked table parsing and pointer resolution.
 - [ ] Verify unknown records remain indexed without corrupting stream state.
-- [ ] Commit `feat: decode typed T6 asset tables`.
+- [ ] Commit `feat: decode typed T6 asset tables` and update checkpoint.
 
 ### Task 5: World geometry, materials, textures, and static models
 
@@ -99,7 +111,7 @@
 - [ ] Reject release-validation output if fallback bounds geometry is used.
 - [ ] Implement real surface/static-model extraction and material/image binding.
 - [ ] Verify Hijacked fixture reports expected world counts and non-fallback mesh output.
-- [ ] Commit `feat: convert real T6 world rendering data`.
+- [ ] Commit `feat: convert real T6 world rendering data` and update checkpoint.
 
 ### Task 6: Collision, models, animation, weapons, entities, scripts, and audio
 
@@ -118,7 +130,7 @@
 - [ ] Add one synthetic fixture and one sanitized metadata fixture per subsystem.
 - [ ] Implement strict parsers with explicit unsupported-field diagnostics.
 - [ ] Store converted records through `GameDataStore`.
-- [ ] Commit `feat: convert gameplay and audio asset classes`.
+- [ ] Commit `feat: convert gameplay and audio asset classes` and update checkpoint.
 
 ### Task 7: Unified mode/zone dependency loader
 
@@ -135,7 +147,7 @@
 - [ ] Add dependency fixtures for one SP, one MP, and one ZM launch descriptor.
 - [ ] Implement common/global + mode + map dependency resolution.
 - [ ] Remove Tranzit-only assumptions from the main launch path while retaining compatibility adapter.
-- [ ] Commit `feat: load BO2 zones across all game modes`.
+- [ ] Commit `feat: load BO2 zones across all game modes` and update checkpoint.
 
 ### Task 8: Native runtime integration and controls
 
@@ -150,7 +162,7 @@
 - [ ] Integrate loader with Metal renderer and touch controls.
 - [ ] Wire collision, weapon fire, entities/scripts sufficient for mode startup, and audio playback.
 - [ ] Verify fallback-only render path fails release validation.
-- [ ] Commit `feat: run converted BO2 GameData natively`.
+- [ ] Commit `feat: run converted BO2 GameData natively` and update checkpoint.
 
 ### Task 9: Full-game conversion orchestration
 
@@ -164,8 +176,10 @@
 
 - [ ] Add interruption/resume and partial-failure tests.
 - [ ] Implement staged full-dump conversion without copying the source tree.
+- [ ] Persist checkpoint after every completed zone + asset class, not only at the end of a map.
+- [ ] On restart, validate manifest/output pairs and continue at the first incomplete unit.
 - [ ] Expose progress and actionable failure records.
-- [ ] Commit `feat: orchestrate full BO2 conversion`.
+- [ ] Commit `feat: orchestrate full BO2 conversion` and update checkpoint.
 
 ### Task 10: CI, simulator validation, and unsigned IPA
 
@@ -181,7 +195,8 @@
 - [ ] Ensure public artifacts contain no BO2 source or converted expressive assets.
 - [ ] Build archive and package `Payload/*.app` as unsigned IPA.
 - [ ] Verify artifact contains app/runtime code only and validation report passes.
-- [ ] Commit `ci: build and validate full BO2 runtime IPA`.
+- [ ] Record workflow run ID + artifact ID in checkpoint.
+- [ ] Commit `ci: build and validate full BO2 runtime IPA` and update checkpoint.
 
 ### Task 11: Device-side full-game release gate
 
@@ -195,5 +210,6 @@
 - [ ] Run conversion against the user's complete local dump.
 - [ ] Validate at least one Campaign map, Hijacked or another Multiplayer map, and one Zombies map with real geometry/materials, movement/collision, weapon fire, audio, and successful mode startup.
 - [ ] Verify converter coverage has no required asset class left as placeholder-only.
+- [ ] Record device-validation results and any unresolved asset classes in checkpoint.
 - [ ] Only after these checks pass, mark the IPA playable/full-game-ready.
-- [ ] Commit `test: add full-game device release gate`.
+- [ ] Commit `test: add full-game device release gate` and update checkpoint.
