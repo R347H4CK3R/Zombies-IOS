@@ -46,6 +46,7 @@ actor BO2FullGameConverter {
             case "ff": stage = .zone
             case "ipak", "iwi", "dds", "png", "jpg", "jpeg", "tga": stage = .images
             case "sabs", "sabl", "wav", "mp3", "at3", "at9", "wem", "xma": stage = .audio
+            case "webm", "bik": stage = .video
             case "xmodel", "xmodel_bin": stage = .models
             case "xanim", "xanim_bin": stage = .animations
             case "material": stage = .materials
@@ -128,9 +129,8 @@ actor BO2FullGameConverter {
                     completed += 1
 
                 default:
-                    // These stages intentionally remain pending until their typed
-                    // decoders emit native GameData. Never mark an indexed/raw file
-                    // as converted; the release gate depends on this distinction.
+                    // Do not mark raw/indexed resources as converted. Each non-zone
+                    // stage remains pending until its typed decoder emits native GameData.
                     pending.append(unit)
                 }
             } catch {
@@ -187,7 +187,7 @@ actor BO2FullGameConverter {
                 }.reduce(into: "") { $0.append($1) }
             }
             .joined(separator: "__")
-        return "zones/\(unit.mode.rawValue)/\(safe).zone.bin"
+        return "\(unit.stage.rawValue)/\(unit.mode.rawValue)/\(safe).gamedata"
     }
 
     private func fileSize(_ url: URL) throws -> UInt64 {
