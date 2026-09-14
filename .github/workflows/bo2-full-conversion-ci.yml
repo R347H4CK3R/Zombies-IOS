@@ -1,0 +1,52 @@
+name: BO2 Full Conversion CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ bo2-full-conversion ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bo2-full-conversion-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Content audit tests
+        run: python3 -m unittest Tools.tests.test_content_audit -v
+      - name: T6 layout tests
+        run: python3 -m unittest Tools.tests.test_t6_gfxsurface_layout -v
+      - name: Audit source tree
+        run: python3 Tools/content_audit.py . --allowlist Tools/content_allowlist.txt
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate project
+        run: xcodegen generate
+      - name: Run iOS unit tests
+        run: xcodebuild test -project ZombiesIOS.xcodeproj -scheme ZombiesIOSTests -sdk iphonesimulator -destination 'platform=iOS Simulator,name=iPhone 17' CODE_SIGNING_ALLOWED=NO
+      - name: Build unsigned device app
+        run: xcodebuild -project ZombiesIOS.xcodeproj -scheme ZombiesIOS -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+      - name: Package unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find build/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$APP_PATH"
+          rm -rf Payload
+          mkdir Payload
+          cp -R "$APP_PATH" Payload/
+          /usr/bin/zip -qry BO2FullConversion-unsigned.ipa Payload
+          rm -rf Payload
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: BO2FullConversion-unsigned-IPA
+          path: BO2FullConversion-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
