@@ -21,6 +21,7 @@ jobs:
         run: |
           cat > layout.cpp <<'CPP'
           #include <cstddef>
+          #include <cstdint>
           #include <iostream>
           #include "oat/src/Common/Game/T6/T6_Assets.h"
           using namespace T6;
@@ -54,7 +55,7 @@ jobs:
             return 0;
           }
           CPP
-          g++ -std=c++23 -m32 layout.cpp -o layout
+          g++ -std=c++23 -m32 -DARCH_x86 layout.cpp -o layout
           ./layout | tee t6-layout.txt
       - uses: actions/upload-artifact@v4
         with:
