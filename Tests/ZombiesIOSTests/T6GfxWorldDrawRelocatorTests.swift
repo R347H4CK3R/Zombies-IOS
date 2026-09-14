@@ -7,7 +7,7 @@ final class T6GfxWorldDrawRelocatorTests: XCTestCase {
         var zone = Data(repeating: 0, count: base + T6GfxWorldDrawRelocator.gfxWorldSize)
         let draw = base + T6GfxWorldDrawRelocator.drawOffset
 
-        writeBE32(3, into: &zone, at: draw + 0x1c) // vertex count
+        writeBE32(3, into: &zone, at: draw + 0x1c)
         writeBE32(8, into: &zone, at: draw + 0x20)
         writeBE32(0xffff_ffff, into: &zone, at: draw + 0x24)
         writeBE32(12, into: &zone, at: draw + 0x2c)
@@ -36,6 +36,48 @@ final class T6GfxWorldDrawRelocatorTests: XCTestCase {
         XCTAssertEqual(result.vertexData0SerializedOffset, base + T6GfxWorldDrawRelocator.gfxWorldSize)
         XCTAssertEqual(result.vertexData1SerializedOffset, base + T6GfxWorldDrawRelocator.gfxWorldSize + vd0.count)
         XCTAssertEqual(result.indicesSerializedOffset, base + T6GfxWorldDrawRelocator.gfxWorldSize + vd0.count + vd1.count)
+    }
+
+    func testConsumesStringsArraysAndCellsBeforeDrawBuffers() throws {
+        let base = 16
+        var zone = Data(repeating: 0, count: base + T6GfxWorldDrawRelocator.gfxWorldSize)
+        let world = base
+        let draw = base + T6GfxWorldDrawRelocator.drawOffset
+
+        writeBE32(0xffff_ffff, into: &zone, at: world + 0x000) // name
+        writeBE32(1, into: &zone, at: world + 0x10c)           // coronaCount
+        writeBE32(0xffff_ffff, into: &zone, at: world + 0x110)
+        writeBE32(1, into: &zone, at: world + 0x174)           // cellCount
+        writeBE32(0xffff_ffff, into: &zone, at: world + 0x188)
+
+        writeBE32(1, into: &zone, at: draw + 0x1c)
+        writeBE32(4, into: &zone, at: draw + 0x20)
+        writeBE32(0xffff_ffff, into: &zone, at: draw + 0x24)
+        writeBE32(0, into: &zone, at: draw + 0x2c)
+        writeBE32(0, into: &zone, at: draw + 0x30)
+        writeBE32(3, into: &zone, at: draw + 0x38)
+        writeBE32(0xffff_ffff, into: &zone, at: draw + 0x3c)
+
+        let name = Data("mp_fixture\0".utf8)
+        let corona = Data(repeating: 0xaa, count: 32)
+        let cell = Data(repeating: 0, count: 48)
+        let vd0 = Data([1,2,3,4])
+        let indices = Data([0,0, 0,0, 0,0])
+        zone.append(name)
+        zone.append(corona)
+        zone.append(cell)
+        zone.append(vd0)
+        zone.append(indices)
+
+        let result = try T6GfxWorldDrawRelocator.relocate(
+            zoneData: zone,
+            gfxWorldSerializedOffset: base,
+            tempBlockSize: UInt32(zone.count + 4096)
+        )
+        let expected = base + T6GfxWorldDrawRelocator.gfxWorldSize + name.count + corona.count + cell.count
+        XCTAssertEqual(result.vertexData0SerializedOffset, expected)
+        XCTAssertEqual(result.vertexData0, vd0)
+        XCTAssertEqual(result.indices, indices)
     }
 
     func testRejectsNonInlineVertexPayloadInsteadOfGuessing() throws {
