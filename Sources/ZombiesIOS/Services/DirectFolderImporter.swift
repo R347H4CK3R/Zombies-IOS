@@ -15,7 +15,7 @@ actor DirectFolderImporter {
             case .cannotAccessFolder:
                 return "The selected BO2 folder could not be accessed."
             case .noManifestMatches:
-                return "No BO2 Zombies manifest files were found in the selected folder."
+                return "No convertible BO2 game-data files were found in the selected folder."
             }
         }
     }
