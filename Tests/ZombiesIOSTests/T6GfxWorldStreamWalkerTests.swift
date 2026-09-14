@@ -92,6 +92,57 @@ final class T6GfxWorldStreamWalkerTests: XCTestCase {
         XCTAssertEqual(result.indices, indices)
     }
 
+    func testInlineReflectionImageConsumesGeneratedT6ImageOrderBeforeDrawData() throws {
+        let gfxWorldSize = 0x404
+        let drawOffset = 0x18c
+        let probeStride = 80
+        let imageSize = 80
+        let loadDefHeaderSize = 12
+        let imageName = Data([0x70, 0x72, 0x6F, 0x62, 0x65, 0x00]) // "probe\0"
+        let imagePayload = Data([0xD1, 0xD2, 0xD3])
+        let vd0 = Data([0x51, 0x52, 0x53, 0x54])
+        let vd1 = Data([0x61, 0x62, 0x63, 0x64])
+        let indices = Data([0x00, 0x00])
+
+        var zone = Data(repeating: 0, count: gfxWorldSize)
+        putBE32(1, into: &zone, at: drawOffset)
+        putBE32(0xFFFF_FFFF, into: &zone, at: drawOffset + 0x04)
+        configureMinimalDraw(in: &zone, drawOffset: drawOffset, vd0: vd0, vd1: vd1)
+
+        var probe = Data(repeating: 0, count: probeStride)
+        putBE32(0xFFFF_FFFF, into: &probe, at: 64) // reflectionImage
+        zone.append(probe)
+
+        // Generated T6 GfxImage order: 80-byte image body in TEMP, then name in
+        // VIRTUAL, then the embedded texture's TEMP loadDef header + resource bytes.
+        var image = Data(repeating: 0, count: imageSize)
+        putBE32(0xFFFF_FFFF, into: &image, at: 0)  // texture.loadDef
+        putBE32(0xFFFF_FFFF, into: &image, at: 72) // name
+        zone.append(image)
+        zone.append(imageName)
+
+        var loadDef = Data(repeating: 0, count: loadDefHeaderSize)
+        putBE32(UInt32(imagePayload.count), into: &loadDef, at: 8)
+        zone.append(loadDef)
+        zone.append(imagePayload)
+
+        zone.append(vd0)
+        zone.append(vd1)
+        zone.append(indices)
+
+        let result = try T6GfxWorldStreamWalker.walk(
+            zoneData: zone,
+            gfxWorldSerializedOffset: 0,
+            tempBlockSize: UInt32(zone.count + 1024)
+        )
+
+        let expectedOffset = gfxWorldSize + probeStride + imageSize + imageName.count + loadDefHeaderSize + imagePayload.count
+        XCTAssertEqual(result.vertexData0SerializedOffset, expectedOffset)
+        XCTAssertEqual(result.vertexData0, vd0)
+        XCTAssertEqual(result.vertexData1, vd1)
+        XCTAssertEqual(result.indices, indices)
+    }
+
     private func configureMinimalDraw(in zone: inout Data, drawOffset: Int, vd0: Data, vd1: Data) {
         putBE32(1, into: &zone, at: drawOffset + 0x1c)
         putBE32(UInt32(vd0.count), into: &zone, at: drawOffset + 0x20)
