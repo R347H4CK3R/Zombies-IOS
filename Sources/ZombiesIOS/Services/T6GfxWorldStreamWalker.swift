@@ -36,6 +36,8 @@ enum T6GfxWorldStreamWalker {
     }
 
     private static let gfxWorldSize = 0x404
+    private static let gfxLightSize = 352
+    private static let gfxLightDefPointerOffset = 348
     private static let drawOffset = 0x18c
     private static let maximumCount: UInt32 = 16_000_000
 
@@ -74,8 +76,12 @@ enum T6GfxWorldStreamWalker {
         try consumeString(pointerAt: 0x024, field: "skyBoxModel", raw: raw, cursor: &cursor)
 
         let sunLight = pointer(raw, 0x100)
-        if sunLight == .following || sunLight == .insert {
-            throw WalkError.inlineAssetUnsupported(field: "sunLight")
+        if sunLight == .following {
+            let light = try cursor.resolveFollowing(alignment: 16, length: gfxLightSize)
+            let lightDef = pointer(light, gfxLightDefPointerOffset)
+            if lightDef == .following || lightDef == .insert {
+                throw WalkError.inlineAssetUnsupported(field: "sunLight.def")
+            }
         }
 
         _ = try consumeArray(count: u32(raw, 0x10c), pointer: pointer(raw, 0x110), elementSize: 32, alignment: 4, field: "coronas", cursor: &cursor)
@@ -263,7 +269,7 @@ enum T6GfxWorldStreamWalker {
         cursor: inout T6ZoneStreamCursor
     ) throws {
         let value = pointer(raw, offset)
-        if value == .following || value == .insert {
+        if value == .following {
             _ = try cursor.resolveNullTerminatedString()
         }
     }
