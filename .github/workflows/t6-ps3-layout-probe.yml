@@ -33,6 +33,7 @@ jobs:
             SZ(GfxWorldFogModifierVolume); SZ(GfxLutVolume); SZ(GfxWorldDpvsPlanes); SZ(cplane_s); SZ(GfxCell); SZ(GfxAabbTree);
             SZ(GfxPortalWritable); SZ(DpvsPlane); SZ(GfxPortal); SZ(GfxReflectionProbeVolumeData); SZ(GfxReflectionProbe);
             SZ(GfxLightmapArray); SZ(GfxWorldDraw); SZ(GfxWorldVertexData0); SZ(GfxWorldVertexData1); SZ(GfxSurface);
+            SZ(GfxWorldDpvsStatic); SZ(GfxStaticModelInst); SZ(GfxStaticModelDrawInst); SZ(GfxDrawSurf); SZ(GfxImage); SZ(GfxTexture); SZ(GfxImageLoadDef);
             OF(GfxWorld,name); OF(GfxWorld,baseName); OF(GfxWorld,planeCount); OF(GfxWorld,nodeCount); OF(GfxWorld,surfaceCount);
             OF(GfxWorld,streamInfo); OF(GfxWorld,skyBoxModel); OF(GfxWorld,sunLight); OF(GfxWorld,sunPrimaryLightIndex); OF(GfxWorld,primaryLightCount);
             OF(GfxWorld,coronaCount); OF(GfxWorld,coronas); OF(GfxWorld,shadowMapVolumeCount); OF(GfxWorld,shadowMapVolumes);
@@ -40,7 +41,7 @@ jobs:
             OF(GfxWorld,exposureVolumePlaneCount); OF(GfxWorld,exposureVolumePlanes); OF(GfxWorld,worldFogVolumeCount); OF(GfxWorld,worldFogVolumes);
             OF(GfxWorld,worldFogVolumePlaneCount); OF(GfxWorld,worldFogVolumePlanes); OF(GfxWorld,worldFogModifierVolumeCount); OF(GfxWorld,worldFogModifierVolumes);
             OF(GfxWorld,worldFogModifierVolumePlaneCount); OF(GfxWorld,worldFogModifierVolumePlanes); OF(GfxWorld,lutVolumeCount); OF(GfxWorld,lutVolumes);
-            OF(GfxWorld,lutVolumePlaneCount); OF(GfxWorld,lutVolumePlanes); OF(GfxWorld,dpvsPlanes); OF(GfxWorld,cells); OF(GfxWorld,draw);
+            OF(GfxWorld,lutVolumePlaneCount); OF(GfxWorld,lutVolumePlanes); OF(GfxWorld,dpvsPlanes); OF(GfxWorld,cells); OF(GfxWorld,draw); OF(GfxWorld,dpvs);
             OF(GfxWorldStreamInfo,aabbTreeCount); OF(GfxWorldStreamInfo,aabbTrees); OF(GfxWorldStreamInfo,leafRefCount); OF(GfxWorldStreamInfo,leafRefs);
             OF(GfxWorldDpvsPlanes,cellCount); OF(GfxWorldDpvsPlanes,planes); OF(GfxWorldDpvsPlanes,nodes); OF(GfxWorldDpvsPlanes,sceneEntCellBits);
             OF(GfxCell,aabbTreeCount); OF(GfxCell,aabbTree); OF(GfxCell,portalCount); OF(GfxCell,portals); OF(GfxCell,reflectionProbeCount); OF(GfxCell,reflectionProbes);
@@ -50,8 +51,13 @@ jobs:
             OF(GfxWorldDraw,reflectionProbeCount); OF(GfxWorldDraw,reflectionProbes); OF(GfxWorldDraw,lightmapCount); OF(GfxWorldDraw,lightmaps);
             OF(GfxWorldDraw,vertexCount); OF(GfxWorldDraw,vertexDataSize0); OF(GfxWorldDraw,vd0); OF(GfxWorldDraw,vertexDataSize1); OF(GfxWorldDraw,vd1);
             OF(GfxWorldDraw,indexCount); OF(GfxWorldDraw,indices);
-            OF(GfxReflectionProbe,probeVolumes); OF(GfxReflectionProbe,probeVolumeCount);
+            OF(GfxReflectionProbe,reflectionImage); OF(GfxReflectionProbe,probeVolumes); OF(GfxReflectionProbe,probeVolumeCount);
             OF(GfxWorldVertexData0,data); OF(GfxWorldVertexData1,data);
+            OF(GfxWorldDpvsStatic,smodelCount); OF(GfxWorldDpvsStatic,staticSurfaceCount); OF(GfxWorldDpvsStatic,smodelVisDataCount); OF(GfxWorldDpvsStatic,surfaceVisDataCount);
+            OF(GfxWorldDpvsStatic,smodelVisData); OF(GfxWorldDpvsStatic,surfaceVisData); OF(GfxWorldDpvsStatic,smodelVisDataCameraSaved); OF(GfxWorldDpvsStatic,surfaceVisDataCameraSaved);
+            OF(GfxWorldDpvsStatic,sortedSurfIndex); OF(GfxWorldDpvsStatic,smodelInsts); OF(GfxWorldDpvsStatic,surfaces); OF(GfxWorldDpvsStatic,smodelDrawInsts); OF(GfxWorldDpvsStatic,surfaceMaterials);
+            OF(GfxImage,texture); OF(GfxImage,pixels); OF(GfxImage,name); OF(GfxImage,hash);
+            OF(GfxImageLoadDef,resourceSize); OF(GfxImageLoadDef,data);
             return 0;
           }
           CPP
