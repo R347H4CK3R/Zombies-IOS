@@ -39,3 +39,5 @@ jobs:
             generated/
           if-no-files-found: error
           retention-days: 1
+
+# Refresh this artifact whenever the T6 loader reference needs re-verification.
