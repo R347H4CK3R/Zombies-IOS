@@ -8,6 +8,7 @@ enum GameDataStage: String, Codable, CaseIterable, Sendable {
     case models
     case animations
     case audio
+    case video
     case weapons
     case entities
     case scripts
