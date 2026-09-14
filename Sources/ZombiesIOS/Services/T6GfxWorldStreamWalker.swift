@@ -321,7 +321,7 @@ enum T6GfxWorldStreamWalker {
     }
 
     private static func pointer(_ data: Data, _ offset: Int) -> T6ZonePointer {
-        T6ZonePointer(rawValue: u32(data, offset))
+        T6ZonePointer.decode(u32(data, offset))
     }
 
     private static func u16(_ data: Data, _ offset: Int) -> UInt16 {
