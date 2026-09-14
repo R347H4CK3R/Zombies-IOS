@@ -1,0 +1,29 @@
+name: Fetch OpenAssetTools Linux
+
+on:
+  push:
+    branches: [bo2-full-conversion]
+    paths:
+      - '.github/workflows/fetch-oat-linux.yml'
+  workflow_dispatch:
+
+jobs:
+  fetch-oat:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download OpenAssetTools
+        run: |
+          set -euxo pipefail
+          curl -L --fail --retry 3 -o oat-linux.tar.gz \
+            https://github.com/Laupetin/OpenAssetTools/releases/download/v0.33.0/oat-linux.tar.gz
+          echo 'aa0b80f633c50d656b26d28b4899fd76bd994024ff0c669303ed5db52cc9e864  oat-linux.tar.gz' | sha256sum -c -
+          mkdir oat-linux
+          tar -xzf oat-linux.tar.gz -C oat-linux
+          find oat-linux -maxdepth 3 -type f -printf '%p\n' | sort
+      - name: Upload OpenAssetTools
+        uses: actions/upload-artifact@v4
+        with:
+          name: oat-linux-v0.33.0
+          path: oat-linux/
+          if-no-files-found: error
+          retention-days: 1
