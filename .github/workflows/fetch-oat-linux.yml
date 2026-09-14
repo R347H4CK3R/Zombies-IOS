@@ -11,6 +11,21 @@ jobs:
   fetch-oat:
     runs-on: ubuntu-latest
     steps:
+      - name: Install 32-bit runtime
+        run: |
+          set -euxo pipefail
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y libc6:i386 libstdc++6:i386 libgcc-s1:i386 zlib1g:i386
+          mkdir -p oat-runtime/lib/i386-linux-gnu
+          cp -L /lib/ld-linux.so.2 oat-runtime/ld-linux.so.2
+          cp -L /lib/i386-linux-gnu/libc.so.6 oat-runtime/lib/i386-linux-gnu/
+          cp -L /lib/i386-linux-gnu/libm.so.6 oat-runtime/lib/i386-linux-gnu/
+          cp -L /lib/i386-linux-gnu/libpthread.so.0 oat-runtime/lib/i386-linux-gnu/ || true
+          cp -L /lib/i386-linux-gnu/libdl.so.2 oat-runtime/lib/i386-linux-gnu/ || true
+          cp -L /lib/i386-linux-gnu/libgcc_s.so.1 oat-runtime/lib/i386-linux-gnu/
+          cp -L /usr/lib/i386-linux-gnu/libstdc++.so.6 oat-runtime/lib/i386-linux-gnu/
+          cp -L /lib/i386-linux-gnu/libz.so.1 oat-runtime/lib/i386-linux-gnu/
       - name: Download OpenAssetTools
         run: |
           set -euxo pipefail
@@ -19,11 +34,13 @@ jobs:
           echo 'aa0b80f633c50d656b26d28b4899fd76bd994024ff0c669303ed5db52cc9e864  oat-linux.tar.gz' | sha256sum -c -
           mkdir oat-linux
           tar -xzf oat-linux.tar.gz -C oat-linux
-          find oat-linux -maxdepth 3 -type f -printf '%p\n' | sort
+          file oat-linux/Unlinker
       - name: Upload OpenAssetTools
         uses: actions/upload-artifact@v4
         with:
-          name: oat-linux-v0.33.0
-          path: oat-linux/
+          name: oat-linux-v0.33.0-runtime
+          path: |
+            oat-linux/
+            oat-runtime/
           if-no-files-found: error
           retention-days: 1
