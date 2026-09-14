@@ -11,17 +11,10 @@ final class T6GfxWorldStreamWalkerTests: XCTestCase {
         let indices = Data([0x00, 0x00])
 
         var zone = Data(repeating: 0, count: gfxWorldSize)
-        putBE32(1, into: &zone, at: 0x134) // worldFogVolumeCount
-        putBE32(0xFFFF_FFFF, into: &zone, at: 0x138) // worldFogVolumes FOLLOWING
+        putBE32(1, into: &zone, at: 0x134)
+        putBE32(0xFFFF_FFFF, into: &zone, at: 0x138)
 
-        putBE32(1, into: &zone, at: drawOffset + 0x1c) // vertexCount
-        putBE32(UInt32(vd0.count), into: &zone, at: drawOffset + 0x20)
-        putBE32(0xFFFF_FFFF, into: &zone, at: drawOffset + 0x24)
-        putBE32(UInt32(vd1.count), into: &zone, at: drawOffset + 0x2c)
-        putBE32(0xFFFF_FFFF, into: &zone, at: drawOffset + 0x30)
-        putBE32(1, into: &zone, at: drawOffset + 0x38) // one UInt16 index
-        putBE32(0xFFFF_FFFF, into: &zone, at: drawOffset + 0x3c)
-
+        configureMinimalDraw(in: &zone, drawOffset: drawOffset, vd0: vd0, vd1: vd1)
         zone.append(Data(repeating: 0xCC, count: fogVolumeSize))
         zone.append(vd0)
         zone.append(vd1)
@@ -37,6 +30,47 @@ final class T6GfxWorldStreamWalkerTests: XCTestCase {
         XCTAssertEqual(result.vertexData0, vd0)
         XCTAssertEqual(result.vertexData1, vd1)
         XCTAssertEqual(result.indices, indices)
+    }
+
+    func testInlineSunLightConsumesVerified352ByteSerializedLayoutBeforeDrawData() throws {
+        let gfxWorldSize = 0x404
+        let drawOffset = 0x18c
+        let sunLightSize = 352
+        let vd0 = Data([0x11, 0x12, 0x13, 0x14])
+        let vd1 = Data([0x21, 0x22, 0x23, 0x24])
+        let indices = Data([0x00, 0x00])
+
+        var zone = Data(repeating: 0, count: gfxWorldSize)
+        putBE32(0xFFFF_FFFF, into: &zone, at: 0x100)
+        configureMinimalDraw(in: &zone, drawOffset: drawOffset, vd0: vd0, vd1: vd1)
+
+        // A zeroed GfxLight has a null nested GfxLightDef pointer, so the loader
+        // consumes only the verified 352-byte GfxLight body before continuing.
+        zone.append(Data(repeating: 0, count: sunLightSize))
+        zone.append(vd0)
+        zone.append(vd1)
+        zone.append(indices)
+
+        let result = try T6GfxWorldStreamWalker.walk(
+            zoneData: zone,
+            gfxWorldSerializedOffset: 0,
+            tempBlockSize: UInt32(zone.count + 1024)
+        )
+
+        XCTAssertEqual(result.vertexData0SerializedOffset, gfxWorldSize + sunLightSize)
+        XCTAssertEqual(result.vertexData0, vd0)
+        XCTAssertEqual(result.vertexData1, vd1)
+        XCTAssertEqual(result.indices, indices)
+    }
+
+    private func configureMinimalDraw(in zone: inout Data, drawOffset: Int, vd0: Data, vd1: Data) {
+        putBE32(1, into: &zone, at: drawOffset + 0x1c)
+        putBE32(UInt32(vd0.count), into: &zone, at: drawOffset + 0x20)
+        putBE32(0xFFFF_FFFF, into: &zone, at: drawOffset + 0x24)
+        putBE32(UInt32(vd1.count), into: &zone, at: drawOffset + 0x2c)
+        putBE32(0xFFFF_FFFF, into: &zone, at: drawOffset + 0x30)
+        putBE32(1, into: &zone, at: drawOffset + 0x38)
+        putBE32(0xFFFF_FFFF, into: &zone, at: drawOffset + 0x3c)
     }
 
     private func putBE32(_ value: UInt32, into data: inout Data, at offset: Int) {
